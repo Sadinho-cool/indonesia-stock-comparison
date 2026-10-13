@@ -2275,6 +2275,10 @@ function setupTheme() {
             const canvas =
                 $("priceChart");
 
+            document.querySelectorAll(".dividend-chart, #dividendComparisonChart").forEach(chart => {
+                if (typeof chart.__redraw === "function") chart.__redraw();
+            });
+
 
             if (
                 canvas &&
@@ -2873,6 +2877,133 @@ function renderDividendsV2(response, profileResponse, index, symbol) {
 }
 
 
+
+function renderDividendComparisonV2(response1, profile1, symbol1, response2, profile2, symbol2) {
+    const canvas = $("dividendComparisonChart");
+    const legend = $("dividendComparisonLegend");
+    if (!canvas) return;
+
+    const getDividends = (response, profile) => {
+        let items = response && !response.__error && response.data
+            ? safeArray(response.data.past).filter(item => item && item.type === "DIVIDEND")
+            : [];
+        if (!items.length && profile && !profile.__error) {
+            items = safeArray(profile.data?.dividends).map(item => ({
+                type: "DIVIDEND",
+                value: item.cashPerShare != null ? "Rp" + item.cashPerShare : null,
+                fields: { "Pay Date": item.paymentDate, "Ex Date": item.exDate },
+                bookYear: item.bookYear
+            }));
+        }
+        const dateOf = item => {
+            const fields = item.fields || {};
+            return fields["Pay Date"] || fields["Ex Date"] || fields["Cum Date"] || item.bookYear || "";
+        };
+        const timestamp = value => {
+            const parsed = new Date(value);
+            if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
+            const match = String(value).match(/(\d{1,2})\s+([A-Za-z]{3})\s+'?(\d{2,4})?/);
+            if (!match) return 0;
+            const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+            const year = match[3] ? Number(match[3].length === 2 ? "20" + match[3] : match[3]) : new Date().getFullYear();
+            return new Date(year, months[match[2]] ?? 0, Number(match[1])).getTime();
+        };
+        return items.map(item => {
+            const raw = String(item.value || "").replace(/[^0-9,.-]/g, "").replace(",", ".");
+            return { date: dateOf(item), time: timestamp(dateOf(item)), value: Number(raw) };
+        }).filter(item => Number.isFinite(item.value)).sort((a,b) => a.time - b.time).slice(-8);
+    };
+
+    const first = getDividends(response1, profile1);
+    const second = getDividends(response2, profile2);
+    const maxLength = Math.max(first.length, second.length, 1);
+    const labels = Array.from({length:maxLength}, (_,i) => {
+        const a = first[i], b = second[i];
+        const date = a?.date || b?.date || "";
+        return date ? String(date).replace(/\s+\d{4}.*/, "").slice(0,10) : "Pembayaran " + (i+1);
+    });
+    const values1 = Array.from({length:maxLength}, (_,i) => first[i]?.value ?? null);
+    const values2 = Array.from({length:maxLength}, (_,i) => second[i]?.value ?? null);
+    const combined = Array.from({length:maxLength}, (_,i) =>
+        values1[i] != null && values2[i] != null ? values1[i] + values2[i] :
+        values1[i] != null ? values1[i] : values2[i]
+    );
+
+    if (legend) {
+        legend.replaceChildren();
+        [[symbol1,"series-one"],[symbol2,"series-two"],["Gabungan","series-total"]].forEach(([labelText, cls]) => {
+            const item = document.createElement("span");
+            item.className = "dividend-legend-item";
+            const swatch = document.createElement("i");
+            swatch.className = "dividend-legend-swatch " + cls;
+            const text = document.createElement("span");
+            text.textContent = labelText;
+            item.append(swatch,text);
+            legend.appendChild(item);
+        });
+    }
+
+    const draw = () => {
+        const rect = canvas.getBoundingClientRect();
+        const width = Math.max(300, Math.floor(rect.width || 600));
+        const height = 250;
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = width * ratio;
+        canvas.height = height * ratio;
+        canvas.style.height = height + "px";
+        const ctx = canvas.getContext("2d");
+        ctx.setTransform(ratio,0,0,ratio,0,0);
+        ctx.clearRect(0,0,width,height);
+        const textColor = getComputedStyle(document.body).color;
+        const muted = getComputedStyle(document.documentElement).getPropertyValue("--text-muted").trim() || textColor;
+        const colors = [
+            getComputedStyle(document.documentElement).getPropertyValue("--primary").trim() || "#2563eb",
+            getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#7c3aed",
+            getComputedStyle(document.documentElement).getPropertyValue("--success").trim() || "#16a34a"
+        ];
+        const series = [values1, values2, combined];
+        const valid = series.flat().filter(v => v != null && Number.isFinite(v));
+        if (!valid.length) {
+            ctx.fillStyle = textColor; ctx.font = "13px sans-serif";
+            ctx.fillText("Data dividen belum tersedia untuk dibandingkan.", 12, 24);
+            return;
+        }
+        const max = Math.max(...valid) * 1.12 || 1;
+        const pad = {left:40,right:14,top:18,bottom:42};
+        const chartW = width-pad.left-pad.right, chartH = height-pad.top-pad.bottom;
+        ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--border").trim() || "#ddd";
+        ctx.fillStyle = muted; ctx.font = "10px sans-serif"; ctx.textAlign = "right";
+        for(let tick=0;tick<=4;tick++){
+            const y=pad.top+chartH-(chartH*tick/4);
+            ctx.beginPath();ctx.moveTo(pad.left,y);ctx.lineTo(width-pad.right,y);ctx.stroke();
+            ctx.fillText(String(Math.round(max*tick/4)),pad.left-7,y+3);
+        }
+        const xAt = i => maxLength === 1 ? pad.left+chartW/2 : pad.left+(chartW*i/(maxLength-1));
+        series.forEach((values, si) => {
+            ctx.strokeStyle = colors[si]; ctx.fillStyle = colors[si]; ctx.lineWidth = si===2 ? 2.5 : 2;
+            ctx.beginPath(); let started=false;
+            values.forEach((value,i)=>{
+                if(value==null || !Number.isFinite(value)){started=false;return;}
+                const x=xAt(i), y=pad.top+chartH-(value/max*chartH);
+                if(!started){ctx.moveTo(x,y);started=true;} else ctx.lineTo(x,y);
+            });
+            ctx.stroke();
+            values.forEach((value,i)=>{
+                if(value==null || !Number.isFinite(value))return;
+                const x=xAt(i), y=pad.top+chartH-(value/max*chartH);
+                ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();
+            });
+        });
+        ctx.fillStyle=textColor;ctx.textAlign="center";ctx.font="10px sans-serif";
+        labels.forEach((label,i)=>{
+            if(maxLength<=8 || i===0 || i===maxLength-1 || i%2===0)
+                ctx.fillText(String(label).slice(0,11),xAt(i),height-18);
+        });
+    };
+    canvas.__redraw = draw;
+    requestAnimationFrame(draw);
+}
+
 function renderFinancialV2(response, index, symbol) {
     const suffix = index + 1;
     setText("reportTitle" + suffix, symbol + " — Laporan Keuangan");
@@ -2965,10 +3096,37 @@ function renderFinancialV2(response, index, symbol) {
             table.className = "financial-table-wrap";
             const tbl = document.createElement("table");
             tbl.className = "financial-table";
+            const displayCell = value => {
+                if (value == null || value === "") return "—";
+                if (typeof value !== "object") return String(value);
+                if (Array.isArray(value)) return value.map(displayCell).join(" · ");
+                for (const key of ["formattedValue", "formatted", "displayValue", "display", "value", "amount", "label", "name", "title", "text"]) {
+                    if (value[key] != null && typeof value[key] !== "object") return String(value[key]);
+                }
+                const entries = Object.entries(value).filter(([key]) => !["id", "key"].includes(key));
+                return entries.map(([key, item]) => {
+                    if (item == null || typeof item !== "object") return String(item ?? "—");
+                    return displayCell(item);
+                }).filter(Boolean).join(" · ") || "—";
+            };
+            const rowLabelKeys = ["label", "name", "title", "item", "metric", "account", "description", "particulars", "key"];
             const normalized = rows.map(row => {
-                if (Array.isArray(row)) return row.map(v => v == null ? "—" : String(v));
-                if (row && typeof row === "object") return Object.values(row).map(v => v == null ? "—" : String(v));
-                return [String(row)];
+                if (Array.isArray(row)) return row.map(displayCell);
+                if (row && typeof row === "object") {
+                    const labelKey = rowLabelKeys.find(key => row[key] != null && typeof row[key] !== "object");
+                    const label = labelKey ? displayCell(row[labelKey]) : null;
+                    const valueKey = ["values", "periods", "data", "amounts"].find(key => row[key] != null);
+                    let values = valueKey ? row[valueKey] : null;
+                    if (values && typeof values === "object" && !Array.isArray(values)) {
+                        values = Object.values(values);
+                    }
+                    if (Array.isArray(values)) return [ ...(label ? [label] : []), ...values.map(displayCell) ];
+                    const rest = Object.entries(row)
+                        .filter(([key]) => key !== labelKey && !["id", "key"].includes(key))
+                        .map(([, value]) => displayCell(value));
+                    return [ ...(label ? [label] : []), ...rest ];
+                }
+                return [displayCell(row)];
             });
             const headers = Array.isArray(tableData?.headers) ? tableData.headers :
                 (Array.isArray(tableData?.columns) ? tableData.columns : []);
@@ -3184,6 +3342,11 @@ async function compareStocksV2() {
             stockData2.profile,
             1,
             stock2
+        );
+
+        renderDividendComparisonV2(
+            stockData1.dividends, stockData1.profile, stock1,
+            stockData2.dividends, stockData2.profile, stock2
         );
 
         renderFinancialV2(stockData1.financial, 0, stock1);
