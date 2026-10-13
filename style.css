@@ -1787,3 +1787,94 @@ footer small {
     }
 
 }
+
+
+/* =========================
+   V2 SECTION NAVIGATION
+========================= */
+.section-nav {
+    position: sticky;
+    top: 10px;
+    z-index: 100;
+    display: flex;
+    gap: 6px;
+    width: 100%;
+    margin: 0 0 22px;
+    padding: 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(14px);
+}
+.section-nav-item {
+    flex: 0 0 auto;
+    min-height: 38px;
+    padding: 0 15px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 750;
+    cursor: pointer;
+    transition: background .18s ease, color .18s ease, border-color .18s ease;
+}
+.section-nav-item:hover {
+    color: var(--text);
+    background: var(--surface-soft);
+}
+.section-nav-item.active {
+    color: var(--primary);
+    background: var(--primary-soft);
+    border-color: color-mix(in srgb, var(--primary) 25%, var(--border));
+}
+#result, #comparison, #marketSection, #chartSection, #dividendSection, #financialSection, #profileSection {
+    scroll-margin-top: 95px;
+}
+.dividend-chart {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    margin: 8px 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-soft);
+}
+.dividend-history-toggle, .financial-tab {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    padding: 10px 13px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 750;
+    cursor: pointer;
+}
+.dividend-history-toggle:hover, .financial-tab:hover,
+.financial-tab.active {
+    background: var(--primary-soft);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+.dividend-history-toggle { width: 100%; margin: 4px 0 10px; }
+.dividend-history { display: flex; flex-direction: column; gap: 8px; }
+.financial-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+.financial-report-content { display:flex; flex-direction:column; gap:16px; min-width:0; }
+.financial-statement { min-width:0; padding:14px; border:1px solid var(--border); border-radius:12px; background:var(--surface); }
+.financial-statement h4 { margin:0 0 12px; font-size:14px; }
+.financial-table-wrap { width:100%; overflow:auto; border:1px solid var(--border); border-radius:10px; }
+.financial-table { min-width:540px; border-collapse:collapse; }
+.financial-table th, .financial-table td { padding:10px 12px; white-space:nowrap; font-size:11px; }
+.financial-table thead th { position:sticky; top:0; z-index:1; }
+.financial-table tbody th { text-align:left; color:var(--text-secondary); }
+@media (max-width:600px) {
+    .section-nav { top: 6px; margin-bottom:16px; padding:6px; border-radius:12px; }
+    .section-nav-item { min-height:36px; padding:0 12px; font-size:11px; }
+    .financial-statement { padding:10px; }
+}
