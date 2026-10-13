@@ -19,8 +19,7 @@ const TYPES = [
     "history",
     "fundamentals",
     "dividends",
-    "financial",
-    "ownership"
+    "financial"
 ];
 
 
@@ -2696,179 +2695,315 @@ function renderProfileV2(response, index, symbol) {
     card.appendChild(wrapper);
 }
 
+
 function renderDividendsV2(response, profileResponse, index, symbol) {
     const suffix = index + 1;
     setText("dividendTitle" + suffix, symbol);
 
     let dividends = [];
-
     if (response && !response.__error && response.data) {
         dividends = safeArray(response.data.past)
             .filter(item => item && item.type === "DIVIDEND");
     }
 
-    if (dividends.length === 0) {
-        const profile =
-            profileResponse && !profileResponse.__error
-                ? profileResponse.data
-                : null;
-        dividends = safeArray(profile?.dividends);
+    const profile = profileResponse && !profileResponse.__error
+        ? profileResponse.data
+        : null;
+
+    if (!dividends.length) {
+        dividends = safeArray(profile?.dividends).map(item => ({
+            type: "DIVIDEND",
+            value: item.cashPerShare != null ? "Rp" + item.cashPerShare : null,
+            title: "Dividend",
+            fields: {
+                "Cum Date": item.cumDate,
+                "Ex Date": item.exDate,
+                "Pay Date": item.paymentDate
+            },
+            bookYear: item.bookYear
+        }));
     }
 
     const list = $("dividendList" + suffix);
     if (!list) return;
-
     list.replaceChildren();
 
-    if (dividends.length === 0) {
-        list.appendChild(
-            createEmptyState("Belum ada data dividen yang tersedia.")
-        );
+    const parseDate = item => {
+        const fields = item.fields || {};
+        return fields["Pay Date"] || fields["Ex Date"] || fields["Cum Date"] || "";
+    };
+    const toTimestamp = value => {
+        if (!value) return 0;
+        const parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
+        const match = String(value).match(/(\d{1,2})\s+([A-Za-z]{3})\s+'?(\d{2,4})?/);
+        if (!match) return 0;
+        const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+        const year = match[3] ? Number(match[3].length === 2 ? "20" + match[3] : match[3]) : new Date().getFullYear();
+        return new Date(year, months[match[2]] ?? 0, Number(match[1])).getTime();
+    };
+    dividends.sort((a, b) => toTimestamp(parseDate(b)) - toTimestamp(parseDate(a)));
+
+    if (!dividends.length) {
+        list.appendChild(createEmptyState("Belum ada data dividen yang tersedia."));
         return;
     }
 
-    dividends.slice(0, 10).forEach((dividend) => {
-        const item = document.createElement("div");
-        item.className = "document-item";
+    const latest = dividends[0];
+    const latestItem = document.createElement("div");
+    latestItem.className = "document-item dividend-latest";
+    const info = document.createElement("div");
+    info.className = "document-info";
+    const name = document.createElement("span");
+    name.className = "document-name";
+    name.textContent = (latest.value || "Dividen terbaru") + " / saham";
+    const meta = document.createElement("span");
+    meta.className = "document-meta";
+    const fields = latest.fields || {};
+    const dates = [
+        fields["Cum Date"] ? "Cum: " + fields["Cum Date"] : null,
+        fields["Ex Date"] ? "Ex: " + fields["Ex Date"] : null,
+        fields["Pay Date"] ? "Bayar: " + fields["Pay Date"] : null
+    ].filter(Boolean);
+    meta.textContent = dates.join(" • ") || latest.title || "Tanggal belum tersedia";
+    info.append(name, meta);
+    latestItem.appendChild(info);
+    list.appendChild(latestItem);
 
-        const info = document.createElement("div");
-        info.className = "document-info";
+    const canvas = document.createElement("canvas");
+    canvas.className = "dividend-chart";
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "Grafik nilai dividen per saham " + symbol);
+    list.appendChild(canvas);
 
-        const name = document.createElement("span");
-        name.className = "document-name";
-        name.textContent =
-            dividend.value
-                ? String(dividend.value) + " / saham"
-                : "Dividend";
-
-        const fields = dividend.fields || {};
-        const meta = document.createElement("span");
-        meta.className = "document-meta";
-
-        const cum = fields["Cum Date"] || dividend.cumDate;
-        const ex = fields["Ex Date"] || dividend.exDate;
-        const pay = fields["Pay Date"] || dividend.paymentDate;
-
-        meta.textContent = [
-            cum ? "Cum: " + cum : null,
-            ex ? "Ex: " + ex : null,
-            pay ? "Pay: " + pay : null
-        ].filter(Boolean).join(" • ") || "Tanggal belum tersedia";
-
-        info.appendChild(name);
-        info.appendChild(meta);
-        item.appendChild(info);
-        list.appendChild(item);
+    const values = dividends.slice(0, 10).map(item => {
+        const raw = String(item.value || "").replace(/[^0-9,.-]/g, "").replace(",", ".");
+        return Number(raw);
+    }).reverse();
+    const labels = dividends.slice(0, 10).reverse().map(item => {
+        const d = parseDate(item);
+        return d || item.bookYear || "";
     });
+    const drawDividendChart = () => {
+        const rect = canvas.getBoundingClientRect();
+        const width = Math.max(260, Math.floor(rect.width || 320));
+        const height = 170;
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = width * ratio;
+        canvas.height = height * ratio;
+        canvas.style.height = height + "px";
+        const ctx = canvas.getContext("2d");
+        ctx.scale(ratio, ratio);
+        ctx.clearRect(0, 0, width, height);
+        const valid = values.filter(Number.isFinite);
+        if (!valid.length || valid.every(v => v === 0)) {
+            ctx.fillStyle = getComputedStyle(document.body).color;
+            ctx.font = "12px sans-serif";
+            ctx.fillText("Grafik tidak tersedia untuk format nilai ini", 8, 24);
+            return;
+        }
+        const max = Math.max(...valid) * 1.15 || 1;
+        const pad = {top:12,right:10,bottom:32,left:10};
+        const chartW = width - pad.left - pad.right;
+        const chartH = height - pad.top - pad.bottom;
+        const gap = 7;
+        const barW = Math.max(8, (chartW - gap * (values.length - 1)) / values.length);
+        const color = getComputedStyle(document.documentElement).getPropertyValue("--primary").trim() || "#2563eb";
+        values.forEach((value, i) => {
+            if (!Number.isFinite(value)) return;
+            const x = pad.left + i * (barW + gap);
+            const barH = Math.max(2, value / max * chartH);
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.roundRect(x, pad.top + chartH - barH, barW, barH, 4);
+            ctx.fill();
+            ctx.fillStyle = getComputedStyle(document.body).color;
+            ctx.font = "10px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(String(value), x + barW / 2, Math.max(10, pad.top + chartH - barH - 4));
+            ctx.fillStyle = getComputedStyle(document.body).color;
+            ctx.fillText(String(labels[i]).slice(0, 7), x + barW / 2, height - 10);
+        });
+    };
+    requestAnimationFrame(drawDividendChart);
+    if (!window.__dividendResizeBound) {
+        window.addEventListener("resize", () => {
+            document.querySelectorAll(".dividend-chart").forEach(c => {
+                if (typeof c.__redraw === "function") c.__redraw();
+            });
+        });
+        window.__dividendResizeBound = true;
+    }
+    canvas.__redraw = drawDividendChart;
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "dividend-history-toggle";
+    toggle.textContent = "Lihat riwayat dividen (" + dividends.length + ")";
+    toggle.setAttribute("aria-expanded", "false");
+    const history = document.createElement("div");
+    history.className = "dividend-history hidden";
+    dividends.forEach(item => {
+        const row = document.createElement("div");
+        row.className = "document-item";
+        const rowInfo = document.createElement("div");
+        rowInfo.className = "document-info";
+        const rowName = document.createElement("span");
+        rowName.className = "document-name";
+        rowName.textContent = (item.value || "Dividen") + " / saham";
+        const rowMeta = document.createElement("span");
+        rowMeta.className = "document-meta";
+        const f = item.fields || {};
+        rowMeta.textContent = [
+            f["Cum Date"] ? "Cum: " + f["Cum Date"] : null,
+            f["Ex Date"] ? "Ex: " + f["Ex Date"] : null,
+            f["Pay Date"] ? "Bayar: " + f["Pay Date"] : null
+        ].filter(Boolean).join(" • ") || item.bookYear || "Tanggal belum tersedia";
+        rowInfo.append(rowName, rowMeta);
+        row.appendChild(rowInfo);
+        history.appendChild(row);
+    });
+    toggle.addEventListener("click", () => {
+        const expanded = toggle.getAttribute("aria-expanded") === "true";
+        toggle.setAttribute("aria-expanded", String(!expanded));
+        history.classList.toggle("hidden", expanded);
+        toggle.textContent = (expanded ? "Lihat" : "Sembunyikan") + " riwayat dividen" + (expanded ? " (" + dividends.length + ")" : "");
+    });
+    list.append(toggle, history);
 }
+
 
 function renderFinancialV2(response, index, symbol) {
     const suffix = index + 1;
-    setText("reportTitle" + suffix, symbol + " — Financial Snapshot");
-
+    setText("reportTitle" + suffix, symbol + " — Laporan Keuangan");
     const list = $("financialList" + suffix);
     if (!list) return;
-
     list.replaceChildren();
 
-    const quarterly =
-        response && !response.__error
-            ? response.data?.quarterly
-            : null;
-
-    if (!quarterly) {
-        list.appendChild(
-            createEmptyState("Data laporan keuangan belum tersedia.")
-        );
+    const data = response && !response.__error ? response.data : null;
+    if (!data || (!data.quarterly && !data.annually)) {
+        list.appendChild(createEmptyState("Data laporan keuangan belum tersedia dari API."));
         return;
     }
 
-    const incomeChart = quarterly.incomeStatement?.chart || {};
-    const balanceChart = quarterly.balanceSheet?.chart || {};
-    const cashChart = quarterly.cashFlow?.chart || {};
+    const periodTabs = document.createElement("div");
+    periodTabs.className = "financial-tabs";
+    const content = document.createElement("div");
+    content.className = "financial-report-content";
+    list.append(periodTabs, content);
 
-    const latestIndex =
-        Array.isArray(incomeChart.timeframe)
-            ? incomeChart.timeframe.length - 1
-            : -1;
-
-    const timeframe =
-        latestIndex >= 0 ? incomeChart.timeframe[latestIndex] : null;
-
-    const rows = [
-        ["Revenue", incomeChart.revenue, "Rp"],
-        ["Net Profit", incomeChart.netProfitLoss, "Rp"],
-        ["Profit Margin", incomeChart.profitMargin, ""],
-        ["Assets", balanceChart.assets, "Rp"],
-        ["Liabilities", balanceChart.liabilities, "Rp"],
-        ["Debt to Asset", balanceChart.debtToAsset, ""]
-    ];
-
-    rows.forEach(([label, values, unit]) => {
-        if (!Array.isArray(values) || latestIndex < 0) return;
-
-        const value = values[latestIndex];
-        if (value === null || value === undefined) return;
-
-        const item = document.createElement("div");
-        item.className = "document-item";
-
-        const info = document.createElement("div");
-        info.className = "document-info";
-
-        const name = document.createElement("span");
-        name.className = "document-name";
-        name.textContent = label;
-
-        const meta = document.createElement("span");
-        meta.className = "document-meta";
-        meta.textContent =
-            (timeframe || "Latest") +
-            " • " +
-            unit +
-            formatNumber(value);
-
-        info.appendChild(name);
-        info.appendChild(meta);
-        item.appendChild(info);
-        list.appendChild(item);
-    });
-
-    const operating = cashChart.operating;
-
-    if (Array.isArray(operating) && latestIndex >= 0) {
-        const value = operating[latestIndex];
-
-        if (value !== null && value !== undefined) {
-            const item = document.createElement("div");
-            item.className = "document-item";
-
-            const info = document.createElement("div");
-            info.className = "document-info";
-
-            const name = document.createElement("span");
-            name.className = "document-name";
-            name.textContent = "Operating Cash Flow";
-
-            const meta = document.createElement("span");
-            meta.className = "document-meta";
-            meta.textContent =
-                (timeframe || "Latest") +
-                " • Rp" +
-                formatNumber(value);
-
-            info.appendChild(name);
-            info.appendChild(meta);
-            item.appendChild(info);
-            list.appendChild(item);
+    const renderPeriod = periodName => {
+        content.replaceChildren();
+        const periodData = data[periodName];
+        if (!periodData) {
+            content.appendChild(createEmptyState("Periode ini tidak tersedia."));
+            return;
         }
-    }
+        const statements = [
+            ["incomeStatement", "Laba Rugi"],
+            ["balanceSheet", "Neraca"],
+            ["cashFlow", "Arus Kas"]
+        ];
+        statements.forEach(([key, label]) => {
+            const statement = periodData[key];
+            if (!statement) return;
+            const section = document.createElement("section");
+            section.className = "financial-statement";
+            const heading = document.createElement("h4");
+            heading.textContent = statement.title || label;
+            section.appendChild(heading);
 
-    if (list.children.length === 0) {
-        list.appendChild(
-            createEmptyState("Data laporan keuangan belum tersedia.")
-        );
-    }
+            const tableData = statement.table;
+            let rows = [];
+            if (Array.isArray(tableData)) rows = tableData;
+            else if (tableData && Array.isArray(tableData.rows)) rows = tableData.rows;
+            else if (tableData && Array.isArray(tableData.data)) rows = tableData.data;
+            else if (tableData && typeof tableData === "object") {
+                const keys = Object.keys(tableData);
+                const arrays = keys.map(k => tableData[k]).filter(Array.isArray);
+                if (arrays.length) {
+                    const first = arrays[0];
+                    rows = first.map((_, i) => {
+                        const row = {};
+                        keys.forEach(k => { if (Array.isArray(tableData[k])) row[k] = tableData[k][i]; });
+                        return row;
+                    });
+                }
+            }
+
+            if (!rows.length) {
+                const chart = statement.chart || {};
+                const periods = Array.isArray(chart.timeframe) ? chart.timeframe : [];
+                const metrics = Object.entries(chart).filter(([k,v]) => k !== "timeframe" && Array.isArray(v));
+                if (periods.length && metrics.length) {
+                    const table = document.createElement("div");
+                    table.className = "financial-table-wrap";
+                    const tbl = document.createElement("table");
+                    tbl.className = "financial-table";
+                    const thead = document.createElement("thead");
+                    const trh = document.createElement("tr");
+                    ["Pos", ...periods].forEach(text => {
+                        const th = document.createElement("th"); th.textContent = text; trh.appendChild(th);
+                    });
+                    thead.appendChild(trh); tbl.appendChild(thead);
+                    const tbody = document.createElement("tbody");
+                    metrics.forEach(([metric, values]) => {
+                        const tr = document.createElement("tr");
+                        const th = document.createElement("th"); th.textContent = metric; tr.appendChild(th);
+                        values.forEach(v => { const td = document.createElement("td"); td.textContent = v == null ? "—" : formatNumber(v); tr.appendChild(td); });
+                        tbody.appendChild(tr);
+                    });
+                    tbl.appendChild(tbody); table.appendChild(tbl); section.appendChild(table);
+                } else {
+                    section.appendChild(createEmptyState("Rincian " + label.toLowerCase() + " belum tersedia."));
+                }
+                content.appendChild(section);
+                return;
+            }
+
+            const table = document.createElement("div");
+            table.className = "financial-table-wrap";
+            const tbl = document.createElement("table");
+            tbl.className = "financial-table";
+            const normalized = rows.map(row => {
+                if (Array.isArray(row)) return row.map(v => v == null ? "—" : String(v));
+                if (row && typeof row === "object") return Object.values(row).map(v => v == null ? "—" : String(v));
+                return [String(row)];
+            });
+            const headers = Array.isArray(tableData?.headers) ? tableData.headers :
+                (Array.isArray(tableData?.columns) ? tableData.columns : []);
+            const thead = document.createElement("thead");
+            const trh = document.createElement("tr");
+            (headers.length ? headers : normalized[0].map((_, i) => i === 0 ? "Pos Laporan" : "Nilai " + i))
+                .forEach(value => { const th = document.createElement("th"); th.textContent = String(value); trh.appendChild(th); });
+            thead.appendChild(trh); tbl.appendChild(thead);
+            const tbody = document.createElement("tbody");
+            normalized.forEach(row => {
+                const tr = document.createElement("tr");
+                row.forEach((value, i) => {
+                    const cell = document.createElement(i === 0 ? "th" : "td");
+                    cell.textContent = value;
+                    tr.appendChild(cell);
+                });
+                tbody.appendChild(tr);
+            });
+            tbl.appendChild(tbody); table.appendChild(tbl); section.appendChild(table);
+            content.appendChild(section);
+        });
+    };
+
+    [["quarterly","Kuartalan"],["annually","Tahunan"]].forEach(([key,label], i) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "financial-tab" + (i === 0 ? " active" : "");
+        button.textContent = label;
+        button.addEventListener("click", () => {
+            periodTabs.querySelectorAll("button").forEach(b => b.classList.toggle("active", b === button));
+            renderPeriod(key);
+        });
+        periodTabs.appendChild(button);
+    });
+    renderPeriod(data.quarterly ? "quarterly" : "annually");
 }
 
 function createV2Navigation() {
@@ -2889,8 +3024,7 @@ function createV2Navigation() {
         ["Chart", "chartSection"],
         ["Dividend", "dividendSection"],
         ["Financials", "financialSection"],
-        ["Profile", "profileSection"],
-        ["Ownership", "ownershipSection"]
+        ["Profile", "profileSection"]
     ];
 
     items.forEach(([label, targetId]) => {
@@ -2932,8 +3066,7 @@ function setupV2SectionObserver() {
         "chartSection",
         "dividendSection",
         "financialSection",
-        "profileSection",
-        "ownershipSection"
+        "profileSection"
     ].map(id => $(id)).filter(Boolean);
 
     const buttons = [...nav.querySelectorAll(".section-nav-item")];
@@ -3056,8 +3189,6 @@ async function compareStocksV2() {
         renderFinancialV2(stockData1.financial, 0, stock1);
         renderFinancialV2(stockData2.financial, 1, stock2);
 
-        renderOwnership(stockData1.ownership, 0, stock1);
-        renderOwnership(stockData2.ownership, 1, stock2);
 
         const history1 = extractHistory(stockData1.history);
         const history2 = extractHistory(stockData2.history);
