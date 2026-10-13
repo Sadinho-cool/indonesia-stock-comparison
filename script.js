@@ -2790,48 +2790,83 @@ function renderDividendsV2(response, profileResponse, index, symbol) {
     });
     const drawDividendChart = () => {
         const rect = canvas.getBoundingClientRect();
-        const width = Math.max(260, Math.floor(rect.width || 320));
-        const height = 170;
+        const width = Math.max(280, Math.floor(rect.width || 320));
+        const height = 190;
         const ratio = window.devicePixelRatio || 1;
         canvas.width = width * ratio;
         canvas.height = height * ratio;
         canvas.style.height = height + "px";
         const ctx = canvas.getContext("2d");
-        ctx.scale(ratio, ratio);
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
         ctx.clearRect(0, 0, width, height);
-        const valid = values.filter(Number.isFinite);
+
+        const root = getComputedStyle(document.documentElement);
+        const css = name => root.getPropertyValue(name).trim();
+        const textColor = css("--text") || getComputedStyle(document.body).color || "#172033";
+        const muted = css("--text-secondary") || textColor;
+        const border = css("--border") || "#d1d5db";
+        const color = css("--primary") || "#2563eb";
+        const valid = values.filter(v => Number.isFinite(v));
+
         if (!valid.length || valid.every(v => v === 0)) {
-            ctx.fillStyle = getComputedStyle(document.body).color;
-            ctx.font = "12px sans-serif";
-            ctx.fillText("Grafik tidak tersedia untuk format nilai ini", 8, 24);
+            ctx.fillStyle = textColor;
+            ctx.font = "12px system-ui, sans-serif";
+            ctx.fillText("Data dividen tidak tersedia untuk grafik.", 10, 24);
             return;
         }
-        const max = Math.max(...valid) * 1.15 || 1;
-        const pad = {top:12,right:10,bottom:32,left:10};
+
+        const maxValue = Math.max(...valid, 1);
+        const unit = maxValue <= 10 ? 1 : maxValue <= 100 ? 10 : 100;
+        const max = Math.ceil(maxValue / unit) * unit;
+        const pad = {top: 20, right: 10, bottom: 38, left: 48};
         const chartW = width - pad.left - pad.right;
         const chartH = height - pad.top - pad.bottom;
-        const gap = 7;
-        const barW = Math.max(8, (chartW - gap * (values.length - 1)) / values.length);
-        const color = getComputedStyle(document.documentElement).getPropertyValue("--primary").trim() || "#2563eb";
+
+        ctx.font = "10px system-ui, sans-serif";
+        ctx.textAlign = "right";
+        ctx.fillStyle = muted;
+        ctx.strokeStyle = border;
+        ctx.lineWidth = 1;
+        for (let tick = 0; tick <= 4; tick++) {
+            const value = max * tick / 4;
+            const y = pad.top + chartH - chartH * tick / 4;
+            ctx.beginPath();
+            ctx.moveTo(pad.left, y);
+            ctx.lineTo(width - pad.right, y);
+            ctx.stroke();
+            ctx.fillText(new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(value), pad.left - 7, y + 3);
+        }
+
+        const gap = values.length > 6 ? 5 : 9;
+        const barW = Math.max(8, (chartW - gap * Math.max(0, values.length - 1)) / values.length);
         values.forEach((value, i) => {
             if (!Number.isFinite(value)) return;
             const x = pad.left + i * (barW + gap);
             const barH = Math.max(2, value / max * chartH);
             ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.roundRect(x, pad.top + chartH - barH, barW, barH, 4);
+            if (typeof ctx.roundRect === "function") ctx.roundRect(x, pad.top + chartH - barH, barW, barH, 4);
+            else ctx.rect(x, pad.top + chartH - barH, barW, barH);
             ctx.fill();
-            ctx.fillStyle = getComputedStyle(document.body).color;
-            ctx.font = "10px sans-serif";
-            ctx.textAlign = "center";
-            ctx.fillText(String(value), x + barW / 2, Math.max(10, pad.top + chartH - barH - 4));
-            ctx.fillStyle = getComputedStyle(document.body).color;
-            ctx.fillText(String(labels[i]).slice(0, 7), x + barW / 2, height - 10);
+
+            if (values.length <= 6 && barW >= 25) {
+                ctx.fillStyle = textColor;
+                ctx.font = "10px system-ui, sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(value), x + barW / 2, Math.max(12, pad.top + chartH - barH - 5));
+            }
+            if (values.length <= 8 || i === 0 || i === values.length - 1 || i % 2 === 0) {
+                ctx.fillStyle = muted;
+                ctx.font = "9px system-ui, sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(String(labels[i]).slice(0, 8), x + barW / 2, height - 13);
+            }
         });
     };
     requestAnimationFrame(drawDividendChart);
     if (!window.__dividendResizeBound) {
         window.addEventListener("resize", () => {
+            document.querySelectorAll(".dividend-comparison-chart").forEach(c => { if (typeof c.__redraw === "function") c.__redraw(); });
             document.querySelectorAll(".dividend-chart").forEach(c => {
                 if (typeof c.__redraw === "function") c.__redraw();
             });
@@ -2916,29 +2951,21 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
 
     const first = getDividends(response1, profile1);
     const second = getDividends(response2, profile2);
-    const maxLength = Math.max(first.length, second.length, 1);
-    const labels = Array.from({length:maxLength}, (_,i) => {
-        const a = first[i], b = second[i];
-        const date = a?.date || b?.date || "";
-        return date ? String(date).replace(/\s+\d{4}.*/, "").slice(0,10) : "Pembayaran " + (i+1);
-    });
-    const values1 = Array.from({length:maxLength}, (_,i) => first[i]?.value ?? null);
-    const values2 = Array.from({length:maxLength}, (_,i) => second[i]?.value ?? null);
-    const combined = Array.from({length:maxLength}, (_,i) =>
-        values1[i] != null && values2[i] != null ? values1[i] + values2[i] :
-        values1[i] != null ? values1[i] : values2[i]
-    );
+    const count = Math.max(first.length, second.length);
+    const labels = Array.from({length: count}, (_, i) => "Ke-" + (i + 1));
+    const values1 = Array.from({length: count}, (_, i) => first[i]?.value ?? null);
+    const values2 = Array.from({length: count}, (_, i) => second[i]?.value ?? null);
 
     if (legend) {
         legend.replaceChildren();
-        [[symbol1,"series-one"],[symbol2,"series-two"],["Gabungan","series-total"]].forEach(([labelText, cls]) => {
+        [[symbol1, "series-one"], [symbol2, "series-two"]].forEach(([labelText, cls]) => {
             const item = document.createElement("span");
             item.className = "dividend-legend-item";
             const swatch = document.createElement("i");
             swatch.className = "dividend-legend-swatch " + cls;
-            const text = document.createElement("span");
-            text.textContent = labelText;
-            item.append(swatch,text);
+            const label = document.createElement("span");
+            label.textContent = labelText;
+            item.append(swatch, label);
             legend.appendChild(item);
         });
     }
@@ -2946,60 +2973,94 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
     const draw = () => {
         const rect = canvas.getBoundingClientRect();
         const width = Math.max(300, Math.floor(rect.width || 600));
-        const height = 250;
+        const height = 270;
         const ratio = window.devicePixelRatio || 1;
         canvas.width = width * ratio;
         canvas.height = height * ratio;
         canvas.style.height = height + "px";
         const ctx = canvas.getContext("2d");
-        ctx.setTransform(ratio,0,0,ratio,0,0);
-        ctx.clearRect(0,0,width,height);
-        const textColor = getComputedStyle(document.body).color;
-        const muted = getComputedStyle(document.documentElement).getPropertyValue("--text-muted").trim() || textColor;
-        const colors = [
-            getComputedStyle(document.documentElement).getPropertyValue("--primary").trim() || "#2563eb",
-            getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#7c3aed",
-            getComputedStyle(document.documentElement).getPropertyValue("--success").trim() || "#16a34a"
-        ];
-        const series = [values1, values2, combined];
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+
+        const root = getComputedStyle(document.documentElement);
+        const css = name => root.getPropertyValue(name).trim();
+        const textColor = css("--text") || getComputedStyle(document.body).color || "#172033";
+        const muted = css("--text-secondary") || textColor;
+        const border = css("--border") || "#d1d5db";
+        const colors = [css("--primary") || "#2563eb", css("--accent") || "#7c3aed"];
+        const series = [values1, values2];
         const valid = series.flat().filter(v => v != null && Number.isFinite(v));
+
         if (!valid.length) {
-            ctx.fillStyle = textColor; ctx.font = "13px sans-serif";
+            ctx.fillStyle = textColor;
+            ctx.font = "13px sans-serif";
             ctx.fillText("Data dividen belum tersedia untuk dibandingkan.", 12, 24);
             return;
         }
-        const max = Math.max(...valid) * 1.12 || 1;
-        const pad = {left:40,right:14,top:18,bottom:42};
-        const chartW = width-pad.left-pad.right, chartH = height-pad.top-pad.bottom;
-        ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--border").trim() || "#ddd";
-        ctx.fillStyle = muted; ctx.font = "10px sans-serif"; ctx.textAlign = "right";
-        for(let tick=0;tick<=4;tick++){
-            const y=pad.top+chartH-(chartH*tick/4);
-            ctx.beginPath();ctx.moveTo(pad.left,y);ctx.lineTo(width-pad.right,y);ctx.stroke();
-            ctx.fillText(String(Math.round(max*tick/4)),pad.left-7,y+3);
+
+        const maxValue = Math.max(...valid, 1);
+        const max = Math.ceil(maxValue / (maxValue <= 10 ? 1 : maxValue <= 100 ? 10 : 100)) *
+            (maxValue <= 10 ? 1 : maxValue <= 100 ? 10 : 100);
+        const pad = {left: 52, right: 18, top: 18, bottom: 38};
+        const chartW = width - pad.left - pad.right;
+        const chartH = height - pad.top - pad.bottom;
+
+        ctx.font = "11px system-ui, sans-serif";
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = border;
+        ctx.fillStyle = muted;
+        ctx.textAlign = "right";
+        for (let tick = 0; tick <= 4; tick++) {
+            const value = max * tick / 4;
+            const y = pad.top + chartH - chartH * tick / 4;
+            ctx.beginPath();
+            ctx.moveTo(pad.left, y);
+            ctx.lineTo(width - pad.right, y);
+            ctx.stroke();
+            ctx.fillText("Rp" + new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(value), pad.left - 8, y + 4);
         }
-        const xAt = i => maxLength === 1 ? pad.left+chartW/2 : pad.left+(chartW*i/(maxLength-1));
+
+        const xAt = i => count <= 1 ? pad.left + chartW / 2 : pad.left + chartW * i / (count - 1);
+        const yAt = value => pad.top + chartH - value / max * chartH;
         series.forEach((values, si) => {
-            ctx.strokeStyle = colors[si]; ctx.fillStyle = colors[si]; ctx.lineWidth = si===2 ? 2.5 : 2;
-            ctx.beginPath(); let started=false;
-            values.forEach((value,i)=>{
-                if(value==null || !Number.isFinite(value)){started=false;return;}
-                const x=xAt(i), y=pad.top+chartH-(value/max*chartH);
-                if(!started){ctx.moveTo(x,y);started=true;} else ctx.lineTo(x,y);
+            ctx.strokeStyle = colors[si];
+            ctx.fillStyle = colors[si];
+            ctx.lineWidth = 2.5;
+            ctx.lineJoin = "round";
+            ctx.lineCap = "round";
+            ctx.beginPath();
+            let started = false;
+            values.forEach((value, i) => {
+                if (value == null || !Number.isFinite(value)) { started = false; return; }
+                const x = xAt(i), y = yAt(value);
+                if (!started) { ctx.moveTo(x, y); started = true; }
+                else ctx.lineTo(x, y);
             });
             ctx.stroke();
-            values.forEach((value,i)=>{
-                if(value==null || !Number.isFinite(value))return;
-                const x=xAt(i), y=pad.top+chartH-(value/max*chartH);
-                ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();
+            values.forEach((value, i) => {
+                if (value == null || !Number.isFinite(value)) return;
+                const x = xAt(i), y = yAt(value);
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = textColor;
+                ctx.font = "10px system-ui, sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(value), x, Math.max(12, y - 9));
+                ctx.fillStyle = colors[si];
             });
         });
-        ctx.fillStyle=textColor;ctx.textAlign="center";ctx.font="10px sans-serif";
-        labels.forEach((label,i)=>{
-            if(maxLength<=8 || i===0 || i===maxLength-1 || i%2===0)
-                ctx.fillText(String(label).slice(0,11),xAt(i),height-18);
+
+        ctx.fillStyle = muted;
+        ctx.font = "11px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        labels.forEach((label, i) => {
+            if (count <= 8 || i === 0 || i === count - 1 || i % 2 === 0) {
+                ctx.fillText(label, xAt(i), height - 14);
+            }
         });
     };
+
     canvas.__redraw = draw;
     requestAnimationFrame(draw);
 }
