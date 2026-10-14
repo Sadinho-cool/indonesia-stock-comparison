@@ -3232,42 +3232,47 @@ function renderFinancialV2(response, index, symbol) {
 
     list.append(controls, content);
 
+    const invalidFinancialLiteral = value =>
+        typeof value === "boolean" ||
+        /^(false|true|null|undefined|nan)$/i.test(String(value == null ? "" : value).trim());
+
+    const cleanFinancialText = value => {
+        if (invalidFinancialLiteral(value)) return "—";
+        return String(value).replace(/\b(false|true|null|undefined|nan)\b/gi, "—").trim() || "—";
+    };
+
     const displayCell = value => {
         if (value === null || value === undefined || value === "") return "—";
-
-        // Boolean dari response API adalah flag/metadata, bukan angka laporan.
-        // Hindari mencetak literal "false" atau "true" ke tabel keuangan.
         if (typeof value === "boolean") return "—";
 
         if (typeof value !== "object") {
             if (typeof value === "number") return formatNumber(value);
             const text = String(value).trim();
-
-            // Beberapa response mengirim boolean sebagai teks.
             if (/^(false|true|null|undefined|nan)$/i.test(text)) return "—";
 
             if (/^-?\d[\d,.]*$/.test(text)) {
                 const number = Number(text.replace(/,/g, ""));
                 if (Number.isFinite(number)) return formatNumber(number);
             }
-            return text;
+            return cleanFinancialText(text);
         }
 
         if (Array.isArray(value)) {
-            return value.map(displayCell).join(" · ");
+            return value.map(displayCell).filter(text => text !== "—").join(" · ") || "—";
         }
 
         for (const key of ["formattedValue", "formatted", "displayValue", "display", "value", "amount", "label", "name", "title", "text"]) {
             if (value[key] !== null && value[key] !== undefined && typeof value[key] !== "object") {
-                return displayCell(value[key]);
+                const cleaned = displayCell(value[key]);
+                if (cleaned !== "—") return cleaned;
             }
         }
 
-        // Abaikan flag boolean saat meratakan object agar metadata tidak terlihat
-        // seperti nilai pendapatan, aset, liabilitas, atau arus kas.
+        // Abaikan flag dan properti metadata Boolean yang dikirim API.
         const entries = Object.entries(value).filter(([key, item]) =>
             !["id", "key"].includes(key) &&
-            typeof item !== "boolean"
+            typeof item !== "boolean" &&
+            !invalidFinancialLiteral(item)
         );
 
         return entries.map(([, item]) => displayCell(item))
@@ -3275,12 +3280,16 @@ function renderFinancialV2(response, index, symbol) {
             .join(" · ") || "—";
     };
 
-    const prettyMetric = value => String(value || "")
-        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-        .replace(/[_-]+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .replace(/\b[a-z]/g, char => char.toUpperCase());
+    const prettyMetric = value => {
+        const raw = String(value || "").trim();
+        if (invalidFinancialLiteral(raw)) return "—";
+        return cleanFinancialText(raw)
+            .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+            .replace(/[_-]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .replace(/\b[a-z]/g, char => char.toUpperCase());
+    };
 
     const getStatements = periodName => {
         const periodData = data[periodName];
@@ -3334,17 +3343,25 @@ function renderFinancialV2(response, index, symbol) {
 
     const getPeriods = statement => {
         const timeframe = statement && statement.chart && statement.chart.timeframe;
-        if (Array.isArray(timeframe) && timeframe.length) return timeframe.map(value => String(value));
+        if (Array.isArray(timeframe) && timeframe.length) {
+            const labels = timeframe.filter(value => !invalidFinancialLiteral(value)).map(value => cleanFinancialText(value));
+            if (labels.length) return labels;
+        }
 
         const parts = getTableParts(statement);
-        if (parts.headers.length > 1) return parts.headers.slice(1).map(value => String(value));
+        if (parts.headers.length > 1) {
+            const labels = parts.headers.slice(1).filter(value => !invalidFinancialLiteral(value)).map(value => cleanFinancialText(value));
+            if (labels.length) return labels;
+        }
         return ["Terbaru"];
     };
 
     const getRowsForSelectedPeriod = (statement, selectedIndex, selectedLabel) => {
         const chart = statement && statement.chart ? statement.chart : {};
         const timeframes = Array.isArray(chart.timeframe) ? chart.timeframe : [];
-        const metricArrays = Object.entries(chart).filter(([key, value]) => key !== "timeframe" && Array.isArray(value));
+        const metricArrays = Object.entries(chart).filter(([key, value]) =>
+            key !== "timeframe" && Array.isArray(value) && !invalidFinancialLiteral(key)
+        );
 
         if (timeframes.length && metricArrays.length) {
             return metricArrays.map(([metric, values]) => [
