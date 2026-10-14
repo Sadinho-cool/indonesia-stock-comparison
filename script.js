@@ -2700,6 +2700,46 @@ function renderProfileV2(response, index, symbol) {
 }
 
 
+function parseDividendAmount(value) {
+    let raw = String(value == null ? "" : value)
+        .replace(/rp/gi, "")
+        .replace(/\s/g, "")
+        .replace(/[^\d,.-]/g, "");
+
+    if (!raw) return NaN;
+
+    const comma = raw.lastIndexOf(",");
+    const dot = raw.lastIndexOf(".");
+    if (comma >= 0 && dot >= 0) {
+        if (comma > dot) raw = raw.replace(/\./g, "").replace(",", ".");
+        else raw = raw.replace(/,/g, "");
+    } else if (comma >= 0) {
+        raw = raw.replace(",", ".");
+    }
+
+    return Number(raw);
+}
+
+function calculateSharedDividendAxis(values) {
+    const valid = values.filter(value => Number.isFinite(value) && value >= 0);
+    const highest = valid.length ? Math.max(...valid) : 0;
+
+    if (highest <= 25) {
+        return { max: 25, step: 5 };
+    }
+
+    const rawStep = highest / 6;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const normalized = rawStep / magnitude;
+    const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+    const step = Math.max(5, multiplier * magnitude);
+    const max = Math.ceil(highest / step) * step;
+
+    return { max, step };
+}
+
+let sharedDividendAxis = { max: 25, step: 5 };
+
 function renderDividendsV2(response, profileResponse, index, symbol) {
     const suffix = index + 1;
     setText("dividendTitle" + suffix, symbol);
@@ -2715,7 +2755,7 @@ function renderDividendsV2(response, profileResponse, index, symbol) {
         : null;
 
     if (!dividends.length) {
-        dividends = safeArray(profile?.dividends).map(item => ({
+        dividends = safeArray(profile && profile.dividends).map(item => ({
             type: "DIVIDEND",
             value: item.cashPerShare != null ? "Rp" + item.cashPerShare : null,
             title: "Dividend",
@@ -2736,17 +2776,23 @@ function renderDividendsV2(response, profileResponse, index, symbol) {
         const fields = item.fields || {};
         return fields["Pay Date"] || fields["Ex Date"] || fields["Cum Date"] || "";
     };
+
     const toTimestamp = value => {
         if (!value) return 0;
-        const parsed = new Date(value);
+        const text = String(value).trim();
+        if (/^\d{4}$/.test(text)) return new Date(Number(text), 0, 1).getTime();
+        const parsed = new Date(text);
         if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
-        const match = String(value).match(/(\d{1,2})\s+([A-Za-z]{3})\s+'?(\d{2,4})?/);
+        const match = text.match(/(\d{1,2})\s+([A-Za-z]{3})\s+'?(\d{2,4})?/);
         if (!match) return 0;
         const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-        const year = match[3] ? Number(match[3].length === 2 ? "20" + match[3] : match[3]) : new Date().getFullYear();
-        return new Date(year, months[match[2]] ?? 0, Number(match[1])).getTime();
+        const year = match[3]
+            ? Number(match[3].length === 2 ? "20" + match[3] : match[3])
+            : new Date().getFullYear();
+        return new Date(year, months[match[2]] || 0, Number(match[1])).getTime();
     };
-    dividends.sort((a, b) => toTimestamp(parseDate(b)) - toTimestamp(parseDate(a)));
+
+    dividends.sort((a, b) => toTimestamp(parseDate(b) || b.bookYear) - toTimestamp(parseDate(a) || a.bookYear));
 
     if (!dividends.length) {
         list.appendChild(createEmptyState("Belum ada data dividen yang tersedia."));
@@ -2769,117 +2815,138 @@ function renderDividendsV2(response, profileResponse, index, symbol) {
         fields["Ex Date"] ? "Ex: " + fields["Ex Date"] : null,
         fields["Pay Date"] ? "Bayar: " + fields["Pay Date"] : null
     ].filter(Boolean);
-    meta.textContent = dates.join(" • ") || latest.title || "Tanggal belum tersedia";
+    meta.textContent = dates.join(" • ") || latest.title || latest.bookYear || "Tanggal belum tersedia";
     info.append(name, meta);
     latestItem.appendChild(info);
     list.appendChild(latestItem);
 
-    const canvas = document.createElement("canvas");
-    canvas.className = "dividend-chart";
-    canvas.setAttribute("role", "img");
-    canvas.setAttribute("aria-label", "Grafik nilai dividen per saham " + symbol);
-    list.appendChild(canvas);
+    const chartItems = dividends.slice(0, 8).map((item, itemIndex) => {
+        const date = parseDate(item) || item.bookYear || "";
+        return {
+            value: parseDividendAmount(item.value),
+            label: date || ("Pembayaran " + (itemIndex + 1)),
+            time: toTimestamp(date) || (Date.UTC(2000, 0, 1) + itemIndex * 86400000)
+        };
+    }).filter(item => Number.isFinite(item.value))
+      .sort((a, b) => a.time - b.time);
 
-    const values = dividends.slice(0, 10).map(item => {
-        const raw = String(item.value || "").replace(/[^0-9,.-]/g, "").replace(",", ".");
-        return Number(raw);
-    }).reverse();
-    const labels = dividends.slice(0, 10).reverse().map(item => {
-        const d = parseDate(item);
-        return d || item.bookYear || "";
-    });
+    const graphButton = document.createElement("button");
+    graphButton.type = "button";
+    graphButton.className = "dividend-history-toggle dividend-graph-toggle";
+    graphButton.textContent = "Tampilkan Grafik";
+    graphButton.setAttribute("aria-expanded", "false");
+
+    const canvas = document.createElement("canvas");
+    canvas.className = "dividend-chart hidden";
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "Grafik dividen per saham " + symbol);
+
     const drawDividendChart = () => {
+        if (canvas.classList.contains("hidden") || canvas.closest(".hidden")) return;
+
         const rect = canvas.getBoundingClientRect();
-        const width = Math.max(280, Math.floor(rect.width || 320));
-        const height = 190;
+        const width = Math.max(300, Math.floor(rect.width || 600));
+        const height = Math.max(280, Math.floor(rect.height || 460));
         const ratio = window.devicePixelRatio || 1;
         canvas.width = width * ratio;
         canvas.height = height * ratio;
-        canvas.style.height = height + "px";
+
         const ctx = canvas.getContext("2d");
         ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
         ctx.clearRect(0, 0, width, height);
 
-        const root = getComputedStyle(document.documentElement);
-        const css = name => root.getPropertyValue(name).trim();
-        const textColor = css("--text") || getComputedStyle(document.body).color || "#172033";
-        const muted = css("--text-secondary") || textColor;
-        const border = css("--border") || "#d1d5db";
+        const styles = getComputedStyle(document.body);
+        const css = name => styles.getPropertyValue(name).trim();
+        const text = css("--text-secondary") || "#475569";
+        const muted = css("--text-muted") || "#94a3b8";
+        const border = css("--border") || "#e2e8f0";
         const color = css("--primary") || "#2563eb";
-        const valid = values.filter(v => Number.isFinite(v));
 
-        if (!valid.length || valid.every(v => v === 0)) {
-            ctx.fillStyle = textColor;
-            ctx.font = "12px system-ui, sans-serif";
-            ctx.fillText("Data dividen tidak tersedia untuk grafik.", 10, 24);
+        if (!chartItems.length) {
+            ctx.fillStyle = text;
+            ctx.font = "13px system-ui, sans-serif";
+            ctx.fillText("Data dividen belum tersedia untuk grafik.", 16, 28);
             return;
         }
 
-        const maxValue = Math.max(...valid, 1);
-        const unit = maxValue <= 10 ? 1 : maxValue <= 100 ? 10 : 100;
-        const max = Math.ceil(maxValue / unit) * unit;
-        const pad = {top: 20, right: 10, bottom: 38, left: 48};
-        const chartW = width - pad.left - pad.right;
-        const chartH = height - pad.top - pad.bottom;
+        const axis = sharedDividendAxis;
+        const padding = { top: 30, right: 25, bottom: 45, left: 65 };
+        const chartWidth = width - padding.left - padding.right;
+        const chartHeight = height - padding.top - padding.bottom;
+        const xAt = i => chartItems.length <= 1
+            ? padding.left + chartWidth / 2
+            : padding.left + chartWidth * i / (chartItems.length - 1);
+        const yAt = value => padding.top + (axis.max - value) / axis.max * chartHeight;
 
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = border;
+        ctx.fillStyle = muted;
         ctx.font = "10px system-ui, sans-serif";
         ctx.textAlign = "right";
-        ctx.fillStyle = muted;
-        ctx.strokeStyle = border;
-        ctx.lineWidth = 1;
-        for (let tick = 0; tick <= 4; tick++) {
-            const value = max * tick / 4;
-            const y = pad.top + chartH - chartH * tick / 4;
+
+        for (let value = 0; value <= axis.max + axis.step * 0.001; value += axis.step) {
+            const y = yAt(value);
             ctx.beginPath();
-            ctx.moveTo(pad.left, y);
-            ctx.lineTo(width - pad.right, y);
+            ctx.moveTo(padding.left, y);
+            ctx.lineTo(width - padding.right, y);
             ctx.stroke();
-            ctx.fillText(new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(value), pad.left - 7, y + 3);
+            ctx.fillText("Rp" + new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(value), padding.left - 8, y + 4);
         }
 
-        const gap = values.length > 6 ? 5 : 9;
-        const barW = Math.max(8, (chartW - gap * Math.max(0, values.length - 1)) / values.length);
-        values.forEach((value, i) => {
-            if (!Number.isFinite(value)) return;
-            const x = pad.left + i * (barW + gap);
-            const barH = Math.max(2, value / max * chartH);
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            if (typeof ctx.roundRect === "function") ctx.roundRect(x, pad.top + chartH - barH, barW, barH, 4);
-            else ctx.rect(x, pad.top + chartH - barH, barW, barH);
-            ctx.fill();
+        ctx.beginPath();
+        chartItems.forEach((point, i) => {
+            const x = xAt(i);
+            const y = yAt(point.value);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        });
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.stroke();
 
-            if (values.length <= 6 && barW >= 25) {
-                ctx.fillStyle = textColor;
-                ctx.font = "10px system-ui, sans-serif";
-                ctx.textAlign = "center";
-                ctx.fillText(new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(value), x + barW / 2, Math.max(12, pad.top + chartH - barH - 5));
+        const last = chartItems[chartItems.length - 1];
+        ctx.beginPath();
+        ctx.arc(xAt(chartItems.length - 1), yAt(last.value), 4, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        ctx.fillStyle = text;
+        ctx.font = "10px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        const labelIndexes = chartItems.length <= 4
+            ? chartItems.map((_, i) => i)
+            : [0, Math.floor(chartItems.length / 2), chartItems.length - 1];
+
+        labelIndexes.forEach(i => {
+            const point = chartItems[i];
+            const date = new Date(point.time);
+            let label = point.label;
+            if (!Number.isNaN(date.getTime()) && !/^Pembayaran/.test(label)) {
+                label = formatShortDate(date.toISOString());
             }
-            if (values.length <= 8 || i === 0 || i === values.length - 1 || i % 2 === 0) {
-                ctx.fillStyle = muted;
-                ctx.font = "9px system-ui, sans-serif";
-                ctx.textAlign = "center";
-                ctx.fillText(String(labels[i]).slice(0, 8), x + barW / 2, height - 13);
-            }
+            ctx.fillText(String(label).slice(0, 14), xAt(i), height - 15);
         });
     };
-    requestAnimationFrame(drawDividendChart);
-    if (!window.__dividendResizeBound) {
-        window.addEventListener("resize", () => {
-            document.querySelectorAll(".dividend-comparison-chart").forEach(c => { if (typeof c.__redraw === "function") c.__redraw(); });
-            document.querySelectorAll(".dividend-chart").forEach(c => {
-                if (typeof c.__redraw === "function") c.__redraw();
-            });
-        });
-        window.__dividendResizeBound = true;
-    }
-    canvas.__redraw = drawDividendChart;
 
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "dividend-history-toggle";
-    toggle.textContent = "Lihat riwayat dividen (" + dividends.length + ")";
-    toggle.setAttribute("aria-expanded", "false");
+    canvas.__redraw = drawDividendChart;
+    graphButton.addEventListener("click", () => {
+        const willShow = canvas.classList.contains("hidden");
+        canvas.classList.toggle("hidden", !willShow);
+        graphButton.setAttribute("aria-expanded", String(willShow));
+        graphButton.textContent = willShow ? "Sembunyikan Grafik" : "Tampilkan Grafik";
+        if (willShow) requestAnimationFrame(() => canvas.__redraw && canvas.__redraw());
+    });
+
+    list.append(graphButton, canvas);
+
+    const historyToggle = document.createElement("button");
+    historyToggle.type = "button";
+    historyToggle.className = "dividend-history-toggle";
+    historyToggle.textContent = "Lihat riwayat dividen (" + dividends.length + ")";
+    historyToggle.setAttribute("aria-expanded", "false");
+
     const history = document.createElement("div");
     history.className = "dividend-history hidden";
     dividends.forEach(item => {
@@ -2902,21 +2969,45 @@ function renderDividendsV2(response, profileResponse, index, symbol) {
         row.appendChild(rowInfo);
         history.appendChild(row);
     });
-    toggle.addEventListener("click", () => {
-        const expanded = toggle.getAttribute("aria-expanded") === "true";
-        toggle.setAttribute("aria-expanded", String(!expanded));
+
+    historyToggle.addEventListener("click", () => {
+        const expanded = historyToggle.getAttribute("aria-expanded") === "true";
+        historyToggle.setAttribute("aria-expanded", String(!expanded));
         history.classList.toggle("hidden", expanded);
-        toggle.textContent = (expanded ? "Lihat" : "Sembunyikan") + " riwayat dividen" + (expanded ? " (" + dividends.length + ")" : "");
+        historyToggle.textContent = (expanded ? "Lihat" : "Sembunyikan") + " riwayat dividen" +
+            (expanded ? " (" + dividends.length + ")" : "");
     });
-    list.append(toggle, history);
+
+    list.append(historyToggle, history);
+
+    if (!window.__dividendResizeBound) {
+        window.addEventListener("resize", () => {
+            document.querySelectorAll(".dividend-comparison-chart, .dividend-chart").forEach(chart => {
+                if (
+                    typeof chart.__redraw === "function" &&
+                    !chart.classList.contains("hidden") &&
+                    !chart.closest(".hidden")
+                ) {
+                    chart.__redraw();
+                }
+            });
+        });
+        window.__dividendResizeBound = true;
+    }
 }
-
-
 
 function renderDividendComparisonV2(response1, profile1, symbol1, response2, profile2, symbol2) {
     const canvas = $("dividendComparisonChart");
     const legend = $("dividendComparisonLegend");
+    const graphArea = $("dividendComparisonGraphArea");
+    const graphButton = $("dividendComparisonToggle");
     if (!canvas) return;
+
+    if (graphArea) graphArea.classList.add("hidden");
+    if (graphButton) {
+        graphButton.textContent = "Tampilkan Grafik";
+        graphButton.setAttribute("aria-expanded", "false");
+    }
 
     const getDividends = (response, profile) => {
         let items = response && !response.__error && response.data
@@ -2938,9 +3029,8 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
 
         const dateOf = item => {
             const fields = item.fields || {};
-            return fields["Pay Date"] || fields["Ex Date"] || fields["Cum Date"] || item.bookYear || "";
+            return fields["Pay Date"] || fields["Ex Date"] || fields["Cum Date"] || "";
         };
-
         const timestamp = value => {
             if (!value) return 0;
             const text = String(value).trim();
@@ -2956,46 +3046,33 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
             return new Date(year, months[match[2]] || 0, Number(match[1])).getTime();
         };
 
-        const parseDividendValue = value => {
-            let raw = String(value == null ? "" : value).replace(/Rp/gi, "").replace(/\s/g, "");
-            if (raw.includes(",") && raw.includes(".")) {
-                raw = raw.replace(/\./g, "").replace(",", ".");
-            } else {
-                raw = raw.replace(",", ".");
-            }
-            return Number(raw.replace(/[^0-9.-]/g, ""));
-        };
-
-        const mapped = items.map((item, index) => {
-            const date = dateOf(item);
-            let time = timestamp(date);
-            if (!time) time = Date.UTC(1970, 0, index + 1);
+        return items.map((item, index) => {
+            const date = dateOf(item) || item.bookYear || "";
             return {
-                date: date || ("Pembayaran " + (index + 1)),
-                time,
-                value: parseDividendValue(item.value)
+                date,
+                time: timestamp(date) || (Date.UTC(2000, 0, 1) + index * 86400000),
+                value: parseDividendAmount(item.value)
             };
         }).filter(item => Number.isFinite(item.value))
-          .sort((a, b) => a.time - b.time);
-
-        return mapped.slice(-8);
+          .sort((a, b) => a.time - b.time)
+          .slice(-8);
     };
 
     const first = getDividends(response1, profile1);
     const second = getDividends(response2, profile2);
-    const series = [first, second];
-    const colors = [
-        getComputedStyle(document.body).getPropertyValue("--primary").trim() || "#2563eb",
-        getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#7c3aed"
-    ];
+    sharedDividendAxis = calculateSharedDividendAxis(
+        first.concat(second).map(item => item.value)
+    );
 
     if (legend) {
         legend.replaceChildren();
-        [[symbol1, "legend-dot-one", colors[0]], [symbol2, "legend-dot-two", colors[1]]].forEach(([symbol, dotClass, color]) => {
+        [[symbol1, "legend-dot-one", "series-one"], [symbol2, "legend-dot-two", "series-two"]].forEach(([symbol, dotClass, seriesClass]) => {
             const item = document.createElement("div");
             const dot = document.createElement("span");
             dot.className = "legend-dot " + dotClass;
-            dot.style.background = color;
+            dot.style.background = seriesClass === "series-one"
+                ? (getComputedStyle(document.body).getPropertyValue("--primary").trim() || "#2563eb")
+                : (getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#7c3aed");
             const label = document.createElement("strong");
             label.textContent = symbol;
             item.append(dot, label);
@@ -3004,11 +3081,12 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
     }
 
     const draw = () => {
+        if (graphArea && graphArea.classList.contains("hidden")) return;
+
         const rect = canvas.getBoundingClientRect();
         const width = Math.max(300, Math.floor(rect.width || 600));
-        const height = Math.max(240, Math.floor(rect.height || 460));
+        const height = Math.max(280, Math.floor(rect.height || 460));
         const ratio = window.devicePixelRatio || 1;
-
         canvas.width = width * ratio;
         canvas.height = height * ratio;
 
@@ -3021,8 +3099,12 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
         const border = css("--border") || "#e2e8f0";
         const muted = css("--text-muted") || "#94a3b8";
         const text = css("--text-secondary") || "#475569";
+        const colors = [
+            css("--primary") || "#2563eb",
+            css("--accent") || "#7c3aed"
+        ];
+        const allPoints = first.concat(second);
 
-        const allPoints = series.flat();
         if (!allPoints.length) {
             ctx.fillStyle = text;
             ctx.font = "13px system-ui, sans-serif";
@@ -3031,38 +3113,23 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
             return;
         }
 
-        const dateMap = new Map();
-        allPoints.forEach(point => {
-            if (!dateMap.has(point.time)) dateMap.set(point.time, point.date);
-        });
-        const dates = Array.from(dateMap.keys()).sort((a, b) => a - b);
-
-        const values = allPoints.map(point => point.value).filter(Number.isFinite);
-        const maxValue = Math.max(...values, 1);
-        const step = maxValue <= 10 ? 1 : maxValue <= 100 ? 10 : maxValue <= 1000 ? 100 : 1000;
-        const max = Math.ceil(maxValue / step) * step;
-        const min = 0;
-        const padding = {top: 30, right: 25, bottom: 45, left: 60};
+        const dates = Array.from(new Set(allPoints.map(item => item.time))).sort((a, b) => a - b);
+        const axis = sharedDividendAxis;
+        const padding = { top: 30, right: 25, bottom: 45, left: 65 };
         const chartWidth = width - padding.left - padding.right;
         const chartHeight = height - padding.top - padding.bottom;
-
-        const xForTime = time => {
-            if (dates.length <= 1) return padding.left + chartWidth / 2;
-            const index = dates.indexOf(time);
-            return padding.left + (index / (dates.length - 1)) * chartWidth;
-        };
-        const yForValue = value => padding.top + ((max - value) / (max - min || 1)) * chartHeight;
+        const xAt = time => dates.length <= 1
+            ? padding.left + chartWidth / 2
+            : padding.left + dates.indexOf(time) / (dates.length - 1) * chartWidth;
+        const yAt = value => padding.top + (axis.max - value) / axis.max * chartHeight;
 
         ctx.lineWidth = 1;
         ctx.strokeStyle = border;
         ctx.fillStyle = muted;
         ctx.font = "10px system-ui, sans-serif";
         ctx.textAlign = "right";
-
-        const gridLines = 5;
-        for (let i = 0; i <= gridLines; i++) {
-            const y = padding.top + (chartHeight / gridLines) * i;
-            const value = max - ((max - min) / gridLines) * i;
+        for (let value = 0; value <= axis.max + axis.step * 0.001; value += axis.step) {
+            const y = yAt(value);
             ctx.beginPath();
             ctx.moveTo(padding.left, y);
             ctx.lineTo(width - padding.right, y);
@@ -3070,57 +3137,59 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
             ctx.fillText("Rp" + new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(value), padding.left - 8, y + 4);
         }
 
-        series.forEach((points, seriesIndex) => {
-            if (!points.length) return;
-            const sorted = points.slice().sort((a, b) => a.time - b.time);
+        const drawLine = (items, color) => {
+            if (!items.length) return;
             ctx.beginPath();
-            sorted.forEach((point, index) => {
-                const x = xForTime(point.time);
-                const y = yForValue(point.value);
+            items.forEach((point, index) => {
+                const x = xAt(point.time);
+                const y = yAt(point.value);
                 if (index === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             });
-            ctx.strokeStyle = colors[seriesIndex];
+            ctx.strokeStyle = color;
             ctx.lineWidth = 2.5;
             ctx.lineJoin = "round";
             ctx.lineCap = "round";
             ctx.stroke();
 
-            const last = sorted[sorted.length - 1];
-            const lastX = xForTime(last.time);
-            const lastY = yForValue(last.value);
+            const last = items[items.length - 1];
             ctx.beginPath();
-            ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
-            ctx.fillStyle = colors[seriesIndex];
+            ctx.arc(xAt(last.time), yAt(last.value), 4, 0, Math.PI * 2);
+            ctx.fillStyle = color;
             ctx.fill();
-        });
+        };
+
+        drawLine(first, colors[0]);
+        drawLine(second, colors[1]);
 
         ctx.fillStyle = text;
         ctx.font = "10px system-ui, sans-serif";
         ctx.textAlign = "center";
         const labelIndexes = dates.length <= 4
-            ? dates.map((_, index) => index)
+            ? dates.map((_, i) => i)
             : [0, Math.floor(dates.length / 2), dates.length - 1];
-
         labelIndexes.forEach(index => {
-            const time = dates[index];
-            const rawLabel = dateMap.get(time) || "";
-            const parsedDate = new Date(time);
-            const label = rawLabel && !/^Pembayaran/.test(rawLabel)
-                ? (Number.isNaN(parsedDate.getTime()) ? rawLabel : formatShortDate(parsedDate.toISOString()))
-                : rawLabel;
-            ctx.fillText(String(label).slice(0, 14), xForTime(time), height - 15);
+            const raw = allPoints.find(item => item.time === dates[index])?.date || "";
+            const parsed = new Date(dates[index]);
+            const label = raw && !/^Pembayaran/.test(raw)
+                ? (Number.isNaN(parsed.getTime()) ? raw : formatShortDate(parsed.toISOString()))
+                : raw;
+            ctx.fillText(String(label).slice(0, 14), xAt(dates[index]), height - 15);
         });
     };
 
     canvas.__redraw = draw;
-    if (!canvas.dataset.resizeBound) {
-        window.addEventListener("resize", () => {
-            if (typeof canvas.__redraw === "function") canvas.__redraw();
+    if (graphButton && !graphButton.dataset.bound) {
+        graphButton.addEventListener("click", () => {
+            const willShow = graphArea && graphArea.classList.contains("hidden");
+            if (!graphArea) return;
+            graphArea.classList.toggle("hidden", !willShow);
+            graphButton.setAttribute("aria-expanded", String(willShow));
+            graphButton.textContent = willShow ? "Sembunyikan Grafik" : "Tampilkan Grafik";
+            if (willShow) requestAnimationFrame(() => canvas.__redraw && canvas.__redraw());
         });
-        canvas.dataset.resizeBound = "true";
+        graphButton.dataset.bound = "true";
     }
-    requestAnimationFrame(draw);
 }
 
 function renderFinancialV2(response, index, symbol) {
