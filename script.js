@@ -3341,68 +3341,189 @@ function renderFinancialV2(response, index, symbol) {
         return {rows, headers};
     };
 
+    const normalizePeriod = value =>
+        cleanFinancialText(value).replace(/\s+/g, " ").trim().toLowerCase();
+
     const getPeriods = statement => {
-        const timeframe = statement && statement.chart && statement.chart.timeframe;
+        // Zapi/Pluang mengirim table sebagai array objek per periode:
+        // { title: "Q2 '25", items: [...], isSelected: false }.
+        const periodTables = Array.isArray(statement && statement.table)
+            ? statement.table.filter(item => item && Array.isArray(item.items) && item.title)
+            : [];
+        if (periodTables.length) {
+            return periodTables.map(item => cleanFinancialText(item.title));
+        }
+
+        // Chart data juga dapat berupa array objek dengan timeframe per baris.
+        const chart = statement && statement.chart;
+        if (Array.isArray(chart)) {
+            const labels = chart
+                .map(point => point && point.timeframe)
+                .filter(value => value !== null && value !== undefined && !invalidFinancialLiteral(value))
+                .map(cleanFinancialText);
+            if (labels.length) return labels;
+        }
+
+        const timeframe = chart && chart.timeframe;
         if (Array.isArray(timeframe) && timeframe.length) {
-            const labels = timeframe.filter(value => !invalidFinancialLiteral(value)).map(value => cleanFinancialText(value));
+            const labels = timeframe
+                .filter(value => !invalidFinancialLiteral(value))
+                .map(cleanFinancialText);
             if (labels.length) return labels;
         }
 
         const parts = getTableParts(statement);
         if (parts.headers.length > 1) {
-            const labels = parts.headers.slice(1).filter(value => !invalidFinancialLiteral(value)).map(value => cleanFinancialText(value));
+            const labels = parts.headers.slice(1)
+                .filter(value => !invalidFinancialLiteral(value))
+                .map(cleanFinancialText);
             if (labels.length) return labels;
         }
+
         return ["Terbaru"];
     };
 
     const getRowsForSelectedPeriod = (statement, selectedIndex, selectedLabel) => {
-        const chart = statement && statement.chart ? statement.chart : {};
-        const timeframes = Array.isArray(chart.timeframe) ? chart.timeframe : [];
-        const metricArrays = Object.entries(chart).filter(([key, value]) =>
-            key !== "timeframe" && Array.isArray(value) && !invalidFinancialLiteral(key)
+        const tableData = statement && statement.table;
+
+        // Format tabel asli Pluang: setiap periode menyimpan "title" dan "items".
+        // Setiap item berisi kolom seperti column1, column2, column3, serta metadata.
+        if (Array.isArray(tableData)) {
+            const periodTables = tableData.filter(item => item && Array.isArray(item.items));
+            if (periodTables.length) {
+                const target = normalizePeriod(selectedLabel);
+                const selectedTable = periodTables.find(item =>
+                    item.title && normalizePeriod(item.title) === target
+                ) || periodTables[selectedIndex] || periodTables[0];
+
+                const columnKeys = item => Object.keys(item || {})
+                    .filter(key => /^column\d+$/i.test(key))
+                    .sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
+
+                let rows = selectedTable.items.map(item => {
+                    const keys = columnKeys(item);
+                    if (keys.length) return keys.map(key => displayCell(item[key]));
+                    if (Array.isArray(item)) return item.map(displayCell);
+                    if (item && typeof item === "object") {
+                        const labelKey = ["label", "name", "title", "item", "metric", "account", "description", "particulars"].find(key =>
+                            item[key] !== null && item[key] !== undefined && typeof item[key] !== "object"
+                        );
+                        const label = labelKey ? displayCell(item[labelKey]) : "";
+                        const rest = Object.entries(item)
+                            .filter(([key, value]) =>
+                                key !== labelKey &&
+                                !["id", "key", "viewType", "isSelected"].includes(key) &&
+                                typeof value !== "boolean" &&
+                                !invalidFinancialLiteral(value)
+                            )
+                            .map(([, value]) => displayCell(value));
+                        return [label, ...rest].filter((value, index) => index === 0 || value !== "");
+                    }
+                    return [displayCell(item)];
+                }).filter(row => row.some(value => value && value !== "—"));
+
+                let headers = [];
+                if (rows.length && /^(item|pos(isi)?|metric|particulars|akun)$/i.test(String(rows[0][0] || "").trim())) {
+                    headers = rows.shift();
+                }
+
+                const columnCount = Math.max(2, ...rows.map(row => row.length), headers.length);
+                if (!headers.length) {
+                    headers = Array.from({length: columnCount}, (_, index) =>
+                        index === 0 ? "Pos Laporan" : index === 1 ? selectedLabel : index === 2 ? "Perubahan" : "Nilai " + index
+                    );
+                } else {
+                    headers = headers.map((header, index) =>
+                        header && header !== "—" ? header : (index === 0 ? "Pos Laporan" : "Nilai " + index)
+                    );
+                }
+
+                if (rows.length) return { headers, rows };
+            }
+        }
+
+        // Fallback: chart bisa berupa array berisi satu objek per kuartal/tahun.
+        const chart = statement && statement.chart;
+        if (Array.isArray(chart) && chart.length) {
+            const points = chart.filter(point => point && typeof point === "object");
+            const selectedPoint = points.find(point =>
+                point.timeframe && normalizePeriod(point.timeframe) === normalizePeriod(selectedLabel)
+            ) || points[selectedIndex] || points[0];
+
+            if (selectedPoint) {
+                const rows = Object.entries(selectedPoint)
+                    .filter(([key, value]) =>
+                        key !== "timeframe" &&
+                        !["id", "key", "isSelected", "viewType"].includes(key) &&
+                        typeof value !== "boolean" &&
+                        !invalidFinancialLiteral(key) &&
+                        value !== null &&
+                        value !== undefined &&
+                        typeof value !== "object"
+                    )
+                    .map(([key, value]) => [prettyMetric(key), displayCell(value)]);
+
+                if (rows.length) return { headers: ["Pos Laporan", selectedLabel], rows };
+            }
+        }
+
+        // Fallback untuk format API lain yang sudah berbentuk object berisi array nilai.
+        const chartObject = chart && !Array.isArray(chart) ? chart : {};
+        const timeframes = Array.isArray(chartObject.timeframe) ? chartObject.timeframe : [];
+        const metricArrays = Object.entries(chartObject).filter(([key, value]) =>
+            key !== "timeframe" &&
+            Array.isArray(value) &&
+            !invalidFinancialLiteral(key)
         );
 
         if (timeframes.length && metricArrays.length) {
-            return metricArrays.map(([metric, values]) => [
+            const rows = metricArrays.map(([metric, values]) => [
                 prettyMetric(metric),
                 displayCell(values[selectedIndex])
             ]);
+            return { headers: ["Pos Laporan", selectedLabel], rows };
         }
 
+        // Fallback untuk tabel datar dari sumber data lain.
         const parts = getTableParts(statement);
-        const headers = parts.headers;
-        const rows = parts.rows;
+        const sourceRows = parts.rows;
+        if (!sourceRows.length) return { headers: [], rows: [] };
 
-        if (!rows.length) return [];
-
-        const headerIndex = headers.findIndex(header =>
-            String(header).trim().toLowerCase() === String(selectedLabel).trim().toLowerCase()
+        const headerIndex = parts.headers.findIndex(header =>
+            normalizePeriod(header) === normalizePeriod(selectedLabel)
         );
         const chosenColumn = headerIndex > 0 ? headerIndex : selectedIndex + 1;
         const labelKeys = ["label", "name", "title", "item", "metric", "account", "description", "particulars", "key"];
         const valueKeys = ["values", "periods", "data", "amounts"];
 
-        return rows.map(row => {
+        const rows = sourceRows.map(row => {
             if (Array.isArray(row)) {
                 if (row.length > 1) {
-                    const columnIndex = headers.length > 1 ? chosenColumn : (row.length > selectedIndex + 1 ? selectedIndex + 1 : 1);
+                    const columnIndex = parts.headers.length > 1
+                        ? chosenColumn
+                        : (row.length > selectedIndex + 1 ? selectedIndex + 1 : 1);
                     return [displayCell(row[0]), displayCell(row[columnIndex])];
                 }
                 return [displayCell(row[0]), "—"];
             }
 
             if (row && typeof row === "object") {
-                const labelKey = labelKeys.find(key => row[key] !== null && row[key] !== undefined && typeof row[key] !== "object");
+                const labelKey = labelKeys.find(key =>
+                    row[key] !== null && row[key] !== undefined && typeof row[key] !== "object"
+                );
                 const label = labelKey ? displayCell(row[labelKey]) : "Pos Laporan";
-                const exactKey = Object.keys(row).find(key => key.trim().toLowerCase() === String(selectedLabel).trim().toLowerCase());
+                const exactKey = Object.keys(row).find(key =>
+                    normalizePeriod(key) === normalizePeriod(selectedLabel)
+                );
                 if (exactKey) return [label, displayCell(row[exactKey])];
 
                 const valueKey = valueKeys.find(key => row[key] !== null && row[key] !== undefined);
                 if (valueKey) {
                     let values = row[valueKey];
                     if (values && typeof values === "object" && !Array.isArray(values)) {
-                        const exactPeriodKey = Object.keys(values).find(key => key.trim().toLowerCase() === String(selectedLabel).trim().toLowerCase());
+                        const exactPeriodKey = Object.keys(values).find(key =>
+                            normalizePeriod(key) === normalizePeriod(selectedLabel)
+                        );
                         if (exactPeriodKey) return [label, displayCell(values[exactPeriodKey])];
                         values = Object.values(values);
                     }
@@ -3410,13 +3531,25 @@ function renderFinancialV2(response, index, symbol) {
                 }
 
                 const rest = Object.entries(row)
-                    .filter(([key]) => key !== labelKey && !["id", "key"].includes(key))
-                    .map(([, value]) => displayCell(value));
+                    .filter(([key, value]) =>
+                        key !== labelKey &&
+                        !["id", "key", "viewType", "isSelected"].includes(key) &&
+                        typeof value !== "boolean" &&
+                        !invalidFinancialLiteral(value)
+                    )
+                    .map(([, value]) => displayCell(value))
+                    .filter(value => value !== "—");
+
                 return [label, rest[selectedIndex] || rest[0] || "—"];
             }
 
             return [displayCell(row), "—"];
         }).filter(row => row[0] && row[0] !== "—");
+
+        return {
+            headers: parts.headers.length ? parts.headers : ["Pos Laporan", selectedLabel],
+            rows
+        };
     };
 
     let selectedType = data.quarterly ? "quarterly" : "annually";
@@ -3515,7 +3648,8 @@ function renderFinancialV2(response, index, symbol) {
         heading.textContent = selected.label + " · " + selectedPeriod;
         section.appendChild(heading);
 
-        const rows = getRowsForSelectedPeriod(selected.value, selectedIndex, selectedPeriod);
+        const reportTable = getRowsForSelectedPeriod(selected.value, selectedIndex, selectedPeriod);
+        const rows = reportTable.rows || [];
         if (!rows.length) {
             section.appendChild(createEmptyState("Rincian untuk laporan dan periode ini belum tersedia dalam format tabel."));
             content.appendChild(section);
@@ -3527,24 +3661,34 @@ function renderFinancialV2(response, index, symbol) {
         const table = document.createElement("table");
         table.className = "financial-table";
 
+        const columnCount = Math.max(
+            (reportTable.headers || []).length,
+            ...rows.map(row => row.length),
+            2
+        );
+        const headers = Array.from({length: columnCount}, (_, index) =>
+            (reportTable.headers || [])[index] ||
+            (index === 0 ? "Pos Laporan" : index === 1 ? selectedPeriod : "Kolom " + (index + 1))
+        );
+
         const thead = document.createElement("thead");
         const headRow = document.createElement("tr");
-        ["Pos Laporan", selectedPeriod].forEach(label => {
+        headers.forEach(label => {
             const th = document.createElement("th");
-            th.textContent = label;
+            th.textContent = cleanFinancialText(label);
             headRow.appendChild(th);
         });
         thead.appendChild(headRow);
         table.appendChild(thead);
 
         const tbody = document.createElement("tbody");
-        rows.forEach(([label, value]) => {
+        rows.forEach(row => {
             const tr = document.createElement("tr");
-            const nameCell = document.createElement("th");
-            nameCell.textContent = label;
-            const valueCell = document.createElement("td");
-            valueCell.textContent = value;
-            tr.append(nameCell, valueCell);
+            Array.from({length: columnCount}, (_, index) => row[index] ?? "—").forEach((value, index) => {
+                const cell = document.createElement(index === 0 ? "th" : "td");
+                cell.textContent = cleanFinancialText(value);
+                tr.appendChild(cell);
+            });
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
