@@ -3424,7 +3424,9 @@ async function compareStocksV2(restoreOnly = false) {
     if (button) button.disabled = true;
     if (buttonText) buttonText.textContent = "Memuat data...";
 
-    const cachedComparison = readComparisonCache(stock1, stock2);
+    // Cache hanya dipakai saat pemulihan otomatis setelah halaman dibuka ulang.
+    // Klik tombol Bandingkan secara sengaja tetap mengambil data terbaru dari API.
+    const cachedComparison = restoreOnly ? readComparisonCache(stock1, stock2) : null;
 
     if (restoreOnly && !cachedComparison) return;
 
