@@ -3218,17 +3218,12 @@ function renderFinancialV2(response, index, symbol) {
     periodLabel.textContent = "Periode";
     periodLabel.appendChild(periodSelect);
 
-    const applyButton = document.createElement("button");
-    applyButton.type = "button";
-    applyButton.className = "financial-apply";
-    applyButton.textContent = "Tampilkan Laporan";
-
-    selectors.append(typeLabel, periodLabel, applyButton);
+    selectors.append(typeLabel, periodLabel);
     controls.append(statementTabs, selectors);
 
     const content = document.createElement("div");
     content.className = "financial-report-content";
-    content.appendChild(createEmptyState("Pilih jenis laporan, frekuensi, dan periode, lalu klik “Tampilkan Laporan”."));
+    content.appendChild(createEmptyState("Pilih jenis laporan dan periode. Tabel akan diperbarui otomatis."));
 
     list.append(controls, content);
 
@@ -3609,9 +3604,7 @@ function renderFinancialV2(response, index, symbol) {
         });
     };
 
-    const showSelectionHint = () => {
-        content.replaceChildren(createEmptyState("Pilihan diperbarui. Klik “Tampilkan Laporan” untuk melihat data dalam tabel."));
-    };
+    const showSelectionHint = () => renderSelectedReport();
 
     periodKeys.forEach(key => {
         const option = document.createElement("option");
@@ -3629,7 +3622,7 @@ function renderFinancialV2(response, index, symbol) {
 
     periodSelect.addEventListener("change", showSelectionHint);
 
-    applyButton.addEventListener("click", () => {
+    const renderSelectedReport = () => {
         content.replaceChildren();
         const statements = getStatements(selectedType);
         const selected = statements.find(item => item.key === selectedStatementKey);
@@ -3695,9 +3688,10 @@ function renderFinancialV2(response, index, symbol) {
         tableWrap.appendChild(table);
         section.appendChild(tableWrap);
         content.appendChild(section);
-    });
+    };
 
     rebuildStatementTabs();
+    renderSelectedReport();
 }
 
 function createV2Navigation() {
