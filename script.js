@@ -3086,19 +3086,13 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
             ctx.lineCap = "round";
             ctx.stroke();
 
-            sorted.forEach(point => {
-                const x = xForTime(point.time);
-                const y = yForValue(point.value);
-                ctx.beginPath();
-                ctx.arc(x, y, 4, 0, Math.PI * 2);
-                ctx.fillStyle = colors[seriesIndex];
-                ctx.fill();
-
-                ctx.fillStyle = text;
-                ctx.font = "10px system-ui, sans-serif";
-                ctx.textAlign = "center";
-                ctx.fillText(new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(point.value), x, Math.max(12, y - 10));
-            });
+            const last = sorted[sorted.length - 1];
+            const lastX = xForTime(last.time);
+            const lastY = yForValue(last.value);
+            ctx.beginPath();
+            ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+            ctx.fillStyle = colors[seriesIndex];
+            ctx.fill();
         });
 
         ctx.fillStyle = text;
