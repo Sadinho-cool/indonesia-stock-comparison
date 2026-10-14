@@ -3690,8 +3690,9 @@ function renderFinancialV2(response, index, symbol) {
         content.appendChild(section);
     };
 
+    // Tunggu pilihan parameter pertama. Perubahan parameter setelah itu
+    // langsung merender ulang laporan tanpa tombol konfirmasi.
     rebuildStatementTabs();
-    renderSelectedReport();
 }
 
 function createV2Navigation() {
