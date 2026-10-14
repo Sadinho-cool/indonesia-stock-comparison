@@ -2104,7 +2104,7 @@ footer small {
 }
 
 
-/* Dividend history charts: common scale, full-width stacked layout, on-demand rendering */
+/* Dividend history charts: shared fixed interval, full-width display */
 .dividend-issuer-grid {
     grid-template-columns: minmax(0, 1fr);
 }
