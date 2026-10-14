@@ -3120,6 +3120,12 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
     };
 
     canvas.__redraw = draw;
+    if (!canvas.dataset.resizeBound) {
+        window.addEventListener("resize", () => {
+            if (typeof canvas.__redraw === "function") canvas.__redraw();
+        });
+        canvas.dataset.resizeBound = "true";
+    }
     requestAnimationFrame(draw);
 }
 
