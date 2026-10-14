@@ -3234,26 +3234,45 @@ function renderFinancialV2(response, index, symbol) {
 
     const displayCell = value => {
         if (value === null || value === undefined || value === "") return "—";
+
+        // Boolean dari response API adalah flag/metadata, bukan angka laporan.
+        // Hindari mencetak literal "false" atau "true" ke tabel keuangan.
+        if (typeof value === "boolean") return "—";
+
         if (typeof value !== "object") {
             if (typeof value === "number") return formatNumber(value);
             const text = String(value).trim();
+
+            // Beberapa response mengirim boolean sebagai teks.
+            if (/^(false|true|null|undefined|nan)$/i.test(text)) return "—";
+
             if (/^-?\d[\d,.]*$/.test(text)) {
                 const number = Number(text.replace(/,/g, ""));
                 if (Number.isFinite(number)) return formatNumber(number);
             }
             return text;
         }
-        if (Array.isArray(value)) return value.map(displayCell).join(" · ");
+
+        if (Array.isArray(value)) {
+            return value.map(displayCell).join(" · ");
+        }
+
         for (const key of ["formattedValue", "formatted", "displayValue", "display", "value", "amount", "label", "name", "title", "text"]) {
             if (value[key] !== null && value[key] !== undefined && typeof value[key] !== "object") {
                 return displayCell(value[key]);
             }
         }
-        const entries = Object.entries(value).filter(([key]) => !["id", "key"].includes(key));
-        return entries.map(([key, item]) => {
-            if (item === null || typeof item !== "object") return String(item ?? "—");
-            return displayCell(item);
-        }).filter(Boolean).join(" · ") || "—";
+
+        // Abaikan flag boolean saat meratakan object agar metadata tidak terlihat
+        // seperti nilai pendapatan, aset, liabilitas, atau arus kas.
+        const entries = Object.entries(value).filter(([key, item]) =>
+            !["id", "key"].includes(key) &&
+            typeof item !== "boolean"
+        );
+
+        return entries.map(([, item]) => displayCell(item))
+            .filter(text => text && text !== "—")
+            .join(" · ") || "—";
     };
 
     const prettyMetric = value => String(value || "")
