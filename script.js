@@ -3342,7 +3342,60 @@ function showResultsV2() {
     setupV2SectionObserver();
 }
 
-async function compareStocksV2() {
+const COMPARISON_CACHE_KEY = "isc-comparison-cache-v1";
+
+function readComparisonCache(symbol1, symbol2) {
+    try {
+        const raw = localStorage.getItem(COMPARISON_CACHE_KEY);
+        if (!raw) return null;
+        const cache = JSON.parse(raw);
+        if (
+            cache.symbol1 !== symbol1 ||
+            cache.symbol2 !== symbol2 ||
+            !cache.data1 ||
+            !cache.data2
+        ) return null;
+        return cache;
+    } catch (error) {
+        console.warn("Cache perbandingan tidak dapat dibaca:", error);
+        return null;
+    }
+}
+
+function saveComparisonCache(symbol1, symbol2, data1, data2) {
+    try {
+        localStorage.setItem(COMPARISON_CACHE_KEY, JSON.stringify({
+            symbol1,
+            symbol2,
+            savedAt: new Date().toISOString(),
+            data1,
+            data2
+        }));
+        return true;
+    } catch (error) {
+        console.warn("Cache perbandingan tidak dapat disimpan (mungkin kapasitas penyimpanan browser penuh):", error);
+        return false;
+    }
+}
+
+function restoreLastComparison() {
+    try {
+        const raw = localStorage.getItem(COMPARISON_CACHE_KEY);
+        if (!raw) return;
+        const cache = JSON.parse(raw);
+        if (!cache.symbol1 || !cache.symbol2 || !cache.data1 || !cache.data2) return;
+        const input1 = $("stock1");
+        const input2 = $("stock2");
+        if (!input1 || !input2) return;
+        input1.value = cache.symbol1;
+        input2.value = cache.symbol2;
+        compareStocksV2(true);
+    } catch (error) {
+        console.warn("Perbandingan sebelumnya tidak dapat dipulihkan:", error);
+    }
+}
+
+async function compareStocksV2(restoreOnly = false) {
     const stock1 = cleanSymbol($("stock1")?.value);
     const stock2 = cleanSymbol($("stock2")?.value);
 
@@ -3371,16 +3424,31 @@ async function compareStocksV2() {
     if (button) button.disabled = true;
     if (buttonText) buttonText.textContent = "Memuat data...";
 
+    const cachedComparison = readComparisonCache(stock1, stock2);
+
+    if (restoreOnly && !cachedComparison) return;
+
     if (status) {
         status.className = "status loading";
-        status.textContent = "Mengambil data dari IDX & Pluang...";
+        status.textContent = cachedComparison
+            ? "Memulihkan perbandingan tersimpan tanpa meminta data API..."
+            : "Mengambil data dari IDX & Pluang...";
     }
 
     try {
-        const [stockData1, stockData2] = await Promise.all([
-            loadStock(stock1),
-            loadStock(stock2)
-        ]);
+        let stockData1;
+        let stockData2;
+
+        if (cachedComparison) {
+            stockData1 = cachedComparison.data1;
+            stockData2 = cachedComparison.data2;
+        } else {
+            [stockData1, stockData2] = await Promise.all([
+                loadStock(stock1),
+                loadStock(stock2)
+            ]);
+            saveComparisonCache(stock1, stock2, stockData1, stockData2);
+        }
 
         renderSummaryV2(stockData1.summary, 0, stock1);
         renderSummaryV2(stockData2.summary, 1, stock2);
@@ -3440,15 +3508,19 @@ async function compareStocksV2() {
 
         if (status) {
             status.className = "status success";
-            status.textContent = "Data berhasil diperbarui.";
+            status.textContent = cachedComparison
+                ? "Perbandingan dipulihkan dari penyimpanan lokal; tidak ada request API baru."
+                : "Data berhasil diperbarui dan disimpan di browser.";
         }
 
-        setTimeout(() => {
-            $("result")?.scrollIntoView({
-                behavior: "smooth",
-                block: "start"
-            });
-        }, 150);
+        if (!restoreOnly) {
+            setTimeout(() => {
+                $("result")?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start"
+                });
+            }, 150);
+        }
 
     } catch (error) {
         console.error(error);
@@ -3465,3 +3537,7 @@ async function compareStocksV2() {
 }
 
 compareStocks = compareStocksV2;
+
+document.addEventListener("DOMContentLoaded", () => {
+    restoreLastComparison();
+});
