@@ -594,11 +594,14 @@
                 <p class="document-meta">Perbandingan nilai dividen per saham untuk masing-masing emiten. Titik pembayaran diurutkan secara kronologis; tanggal pembayaran kedua saham bisa berbeda.</p>
             </div>
         </div>
-        <div id="dividendComparisonLegend" class="chart-legend dividend-comparison-legend"></div>
-        <canvas id="dividendComparisonChart" class="dividend-comparison-chart" role="img" aria-label="Grafik perbandingan dividen per saham kedua emiten"></canvas>
+        <button id="dividendComparisonToggle" class="dividend-history-toggle dividend-graph-toggle" type="button" aria-expanded="false">Tampilkan Grafik</button>
+        <div id="dividendComparisonGraphArea" class="dividend-graph-area hidden">
+            <div id="dividendComparisonLegend" class="chart-legend dividend-comparison-legend"></div>
+            <canvas id="dividendComparisonChart" class="dividend-comparison-chart" role="img" aria-label="Grafik perbandingan dividen per saham kedua emiten"></canvas>
+        </div>
     </div>
 
-    <div class="data-grid">
+    <div class="data-grid dividend-issuer-grid">
 
         <div class="data-card document-card">
 
