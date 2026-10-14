@@ -2724,21 +2724,14 @@ function calculateSharedDividendAxis(values) {
     const valid = values.filter(value => Number.isFinite(value) && value >= 0);
     const highest = valid.length ? Math.max(...valid) : 0;
 
-    if (highest <= 25) {
-        return { max: 25, step: 5 };
-    }
-
-    const rawStep = highest / 6;
-    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
-    const normalized = rawStep / magnitude;
-    const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
-    const step = Math.max(5, multiplier * magnitude);
-    const max = Math.ceil(highest / step) * step;
+    // Semua grafik dividen memakai interval tetap Rp10 dan batas sumbu yang sama.
+    const step = 10;
+    const max = Math.max(step, Math.ceil(highest / step) * step);
 
     return { max, step };
 }
 
-let sharedDividendAxis = { max: 25, step: 5 };
+let sharedDividendAxis = { max: 10, step: 10 };
 
 function renderDividendsV2(response, profileResponse, index, symbol) {
     const suffix = index + 1;
@@ -2999,15 +2992,7 @@ function renderDividendsV2(response, profileResponse, index, symbol) {
 function renderDividendComparisonV2(response1, profile1, symbol1, response2, profile2, symbol2) {
     const canvas = $("dividendComparisonChart");
     const legend = $("dividendComparisonLegend");
-    const graphArea = $("dividendComparisonGraphArea");
-    const graphButton = $("dividendComparisonToggle");
     if (!canvas) return;
-
-    if (graphArea) graphArea.classList.add("hidden");
-    if (graphButton) {
-        graphButton.textContent = "Tampilkan Grafik";
-        graphButton.setAttribute("aria-expanded", "false");
-    }
 
     const getDividends = (response, profile) => {
         let items = response && !response.__error && response.data
@@ -3081,8 +3066,6 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
     }
 
     const draw = () => {
-        if (graphArea && graphArea.classList.contains("hidden")) return;
-
         const rect = canvas.getBoundingClientRect();
         const width = Math.max(300, Math.floor(rect.width || 600));
         const height = Math.max(280, Math.floor(rect.height || 460));
@@ -3179,17 +3162,7 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
     };
 
     canvas.__redraw = draw;
-    if (graphButton && !graphButton.dataset.bound) {
-        graphButton.addEventListener("click", () => {
-            const willShow = graphArea && graphArea.classList.contains("hidden");
-            if (!graphArea) return;
-            graphArea.classList.toggle("hidden", !willShow);
-            graphButton.setAttribute("aria-expanded", String(willShow));
-            graphButton.textContent = willShow ? "Sembunyikan Grafik" : "Tampilkan Grafik";
-            if (willShow) requestAnimationFrame(() => canvas.__redraw && canvas.__redraw());
-        });
-        graphButton.dataset.bound = "true";
-    }
+    requestAnimationFrame(draw);
 }
 
 function renderFinancialV2(response, index, symbol) {
