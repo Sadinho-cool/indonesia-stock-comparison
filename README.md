@@ -171,6 +171,8 @@ Data yang digunakan dalam aplikasi dapat mencakup:
 
 Ketersediaan data dapat berbeda untuk setiap emiten dan endpoint.
 
+Dalam mode pengembangan, respons Cloudflare Worker disimpan di KV tanpa kedaluwarsa otomatis untuk menghemat kuota API. Karena itu, status cache `HIT` berarti respons lama dari cache digunakan kembali; **data tidak dijamin real-time**. Aplikasi menampilkan status cache, sumber/timestamp fundamental yang tersedia, dan memperlakukan angka dengan format satuan yang belum dikenal sebagai belum terverifikasi. Untuk keputusan penting, periksa laporan keuangan resmi dan tanggal data sumber.
+
 ---
 
 ## 🎯 Tujuan
