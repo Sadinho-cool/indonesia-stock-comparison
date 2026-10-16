@@ -2154,8 +2154,12 @@ footer small {
     margin-bottom: 4px;
 }
 @media (max-width: 700px) {
-    .dividend-chart,
-    .dividend-comparison-chart {
+    .dividend-chart {
         height: 280px;
+    }
+
+    /* Samakan tinggi grafik perbandingan dengan price history di layar kecil. */
+    .dividend-comparison-chart {
+        height: 320px;
     }
 }
