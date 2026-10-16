@@ -2480,9 +2480,66 @@ function setupInfoToggle() {
 ========================================================= */
 
 function v2Value(value) {
-    return value === null || value === undefined || value === ""
-        ? "Belum tersedia"
-        : value;
+    if (value === null || value === undefined || typeof value === "boolean") {
+        return "Belum tersedia";
+    }
+
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? String(value) : "Belum tersedia";
+    }
+
+    if (typeof value !== "string") {
+        return "Belum tersedia";
+    }
+
+    const text = value.trim();
+
+    if (
+        !text ||
+        /^(false|true|null|undefined|nan|infinity|-infinity)$/i.test(text) ||
+        /^[-–—]$/.test(text)
+    ) {
+        return "Belum tersedia";
+    }
+
+    return text;
+}
+
+function v2MetricValue(value, unit) {
+    const safeValue = v2Value(value);
+    if (safeValue === "Belum tersedia") return safeValue;
+
+    // Zapi's Pluang fundamentals endpoint documents these metrics as
+    // pre-formatted strings with explicit units. Do not guess units for
+    // an unexpected raw number or an unfamiliar format.
+    if (typeof value !== "string") return "Format API belum terverifikasi";
+
+    const text = value.trim();
+    const patterns = {
+        percent: /^[-+]?\s*\d[\d.,]*\s*%$/,
+        multiple: /^[-+]?\s*\d[\d.,]*\s*x$/i,
+        currency: /^[-+]?\s*Rp\s*[-+]?\s*\d[\d.,]*(?:\s*[KMBT])?$/i
+    };
+
+    return patterns[unit]?.test(text)
+        ? text
+        : "Format API belum terverifikasi";
+}
+
+function formatApiTimestampV2(value) {
+    if (!value) return "";
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+
+    return new Intl.DateTimeFormat("id-ID", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Asia/Jakarta"
+    }).format(date) + " WIB";
 }
 
 function parseSummaryV2(response) {
@@ -2547,11 +2604,11 @@ function ensureFundamentalRows() {
     if (!tbody || tbody.dataset.v2Fundamentals === "true") return;
 
     const rows = [
-        ["ROE", "tableRoe1", "tableRoe2"],
-        ["ROA", "tableRoa1", "tableRoa2"],
-        ["DER", "tableDer1", "tableDer2"],
-        ["Revenue", "tableRevenue1", "tableRevenue2"],
-        ["Net Profit", "tableNetProfit1", "tableNetProfit2"]
+        ["ROE (%)", "tableRoe1", "tableRoe2"],
+        ["ROA (%)", "tableRoa1", "tableRoa2"],
+        ["DER (%)", "tableDer1", "tableDer2"],
+        ["Revenue (format sumber)", "tableRevenue1", "tableRevenue2"],
+        ["Net Profit (format sumber)", "tableNetProfit1", "tableNetProfit2"]
     ];
 
     const volumeRow = $("tableVolume1")?.closest("tr");
@@ -2579,6 +2636,19 @@ function ensureFundamentalRows() {
     });
 
     tbody.dataset.v2Fundamentals = "true";
+
+    // Add a persistent transparency note below the comparison table.
+    if (!$("v2DataIntegrityNote")) {
+        const note = document.createElement("div");
+        note.id = "v2DataIntegrityNote";
+        note.className = "v2-data-integrity-note";
+        note.setAttribute("role", "note");
+        note.setAttribute("aria-live", "polite");
+
+        const tableWrapper = comparison.querySelector(".table-wrapper");
+        if (tableWrapper) tableWrapper.insertAdjacentElement("afterend", note);
+        else comparison.appendChild(note);
+    }
 }
 
 function renderSummaryV2(response, index, symbol) {
@@ -2615,18 +2685,79 @@ function renderFundamentalsV2(response, index, symbol) {
 
     ensureFundamentalRows();
 
-    setText("dividend" + suffix, v2Value(data.dividendYield));
-    setText("per" + suffix, v2Value(data.per));
-    setText("pbv" + suffix, v2Value(data.pbv));
+    setText("dividend" + suffix, v2MetricValue(data.dividendYield, "percent"));
+    setText("per" + suffix, v2MetricValue(data.per, "multiple"));
+    setText("pbv" + suffix, v2MetricValue(data.pbv, "multiple"));
 
-    setText("tableDividend" + suffix, v2Value(data.dividendYield));
-    setText("tablePer" + suffix, v2Value(data.per));
-    setText("tablePbv" + suffix, v2Value(data.pbv));
-    setText("tableRoe" + suffix, v2Value(data.roe));
-    setText("tableRoa" + suffix, v2Value(data.roa));
-    setText("tableDer" + suffix, v2Value(data.der));
-    setText("tableRevenue" + suffix, v2Value(data.revenue));
-    setText("tableNetProfit" + suffix, v2Value(data.netProfit));
+    setText("tableDividend" + suffix, v2MetricValue(data.dividendYield, "percent"));
+    setText("tablePer" + suffix, v2MetricValue(data.per, "multiple"));
+    setText("tablePbv" + suffix, v2MetricValue(data.pbv, "multiple"));
+    setText("tableRoe" + suffix, v2MetricValue(data.roe, "percent"));
+    setText("tableRoa" + suffix, v2MetricValue(data.roa, "percent"));
+    setText("tableDer" + suffix, v2MetricValue(data.der, "percent"));
+    setText("tableRevenue" + suffix, v2MetricValue(data.revenue, "currency"));
+    setText("tableNetProfit" + suffix, v2MetricValue(data.netProfit, "currency"));
+}
+
+function renderFundamentalIntegrityNote(response1, symbol1, response2, symbol2) {
+    const note = $("v2DataIntegrityNote");
+    if (!note) return;
+
+    note.replaceChildren();
+
+    const heading = document.createElement("strong");
+    heading.textContent = "Transparansi dan kualitas data";
+    note.appendChild(heading);
+
+    const describeSource = (response, symbol) => {
+        if (!response || response.__error) {
+            const reason = response?.message || "sumber fundamental tidak tersedia";
+            return `${symbol}: data fundamental gagal dimuat (${reason}). Angka terkait tidak ditampilkan.`;
+        }
+
+        const data = response.data && typeof response.data === "object"
+            ? response.data
+            : {};
+        const source = data.source || "Pluang melalui Zapi";
+        const parsed = parseFundamentalsV2(response);
+        const metricChecks = [
+            ["dividendYield", "percent"],
+            ["per", "multiple"],
+            ["pbv", "multiple"],
+            ["roe", "percent"],
+            ["roa", "percent"],
+            ["der", "percent"],
+            ["revenue", "currency"],
+            ["netProfit", "currency"]
+        ];
+        const hasVerifiableMetric = metricChecks.some(([key, unit]) => {
+            const value = v2MetricValue(parsed[key], unit);
+            return value !== "Belum tersedia" && value !== "Format API belum terverifikasi";
+        });
+
+        if (!hasVerifiableMetric) {
+            return `${symbol}: respons diterima, tetapi belum ada metrik fundamental yang dapat diverifikasi dari format datanya.`;
+        }
+
+        const details = [`${symbol}: sumber ${source}`];
+        if (data.lastUpdated) details.push(`pembaruan penyedia: ${data.lastUpdated}`);
+        if (response.timestamp) details.push(`timestamp respons: ${formatApiTimestampV2(response.timestamp)}`);
+        return details.join(" • ") + ".";
+    };
+
+    [describeSource(response1, symbol1), describeSource(response2, symbol2)].forEach(line => {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = line;
+        note.appendChild(paragraph);
+    });
+
+    const disclaimer = document.createElement("p");
+    disclaimer.className = "v2-data-integrity-disclaimer";
+    disclaimer.textContent =
+        "Metrik dipertahankan dalam format dan satuan yang diberikan penyedia (mis. %, x, atau Rp). " +
+        "Jika format satuan tidak sesuai skema yang dikenal, nilainya ditandai dan tidak ditebak. " +
+        "Periode ringkasan fundamental dapat berbeda antar-metrik; gunakan laporan keuangan resmi untuk memeriksa periode dan konteksnya.";
+    note.appendChild(disclaimer);
 }
 
 function renderProfileV2(response, index, symbol) {
@@ -3877,7 +4008,22 @@ function restoreLastComparison() {
     }
 }
 
-async function compareStocksV2(restoreOnly = false) {
+async function getEndpointFailureSummary(stockData, symbol) {
+    const labels = {
+        summary: "ringkasan pasar",
+        profile: "profil perusahaan",
+        history: "riwayat harga",
+        fundamentals: "fundamental",
+        dividends: "dividen",
+        financial: "laporan keuangan"
+    };
+
+    return TYPES
+        .filter(type => stockData && stockData[type] && stockData[type].__error)
+        .map(type => `${symbol}: ${labels[type]} (${stockData[type].message || "gagal"})`);
+}
+
+function compareStocksV2(restoreOnly = false) {
     const stock1 = cleanSymbol($("stock1")?.value);
     const stock2 = cleanSymbol($("stock2")?.value);
 
@@ -3939,6 +4085,10 @@ async function compareStocksV2(restoreOnly = false) {
 
         renderFundamentalsV2(stockData1.fundamentals, 0, stock1);
         renderFundamentalsV2(stockData2.fundamentals, 1, stock2);
+        renderFundamentalIntegrityNote(
+            stockData1.fundamentals, stock1,
+            stockData2.fundamentals, stock2
+        );
 
         renderProfileV2(stockData1.profile, 0, stock1);
         renderProfileV2(stockData2.profile, 1, stock2);
@@ -3991,10 +4141,23 @@ async function compareStocksV2(restoreOnly = false) {
         showResultsV2();
 
         if (status) {
-            status.className = "status success";
-            status.textContent = cachedComparison
-                ? "Data tersimpan ditampilkan; pemeriksaan pembaruan akan berjalan otomatis."
-                : "Data berhasil diperbarui dan disimpan di browser.";
+            const endpointFailures = [
+                ...getEndpointFailureSummary(stockData1, stock1),
+                ...getEndpointFailureSummary(stockData2, stock2)
+            ];
+
+            if (endpointFailures.length) {
+                status.className = "status warning";
+                status.textContent =
+                    "Perbandingan tampil, tetapi data belum lengkap. Gagal mengambil " +
+                    endpointFailures.join("; ") +
+                    ". Nilai yang tidak tersedia tidak dianggap nol.";
+            } else {
+                status.className = "status success";
+                status.textContent = cachedComparison
+                    ? "Data tersimpan ditampilkan; pemeriksaan pembaruan akan berjalan otomatis."
+                    : "Semua endpoint berhasil merespons. Periksa catatan sumber dan waktu data di bawah tabel.";
+            }
         }
 
         if (restoreOnly && cachedComparison) {
