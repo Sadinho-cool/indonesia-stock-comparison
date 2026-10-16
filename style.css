@@ -2163,3 +2163,39 @@ footer small {
         height: 320px;
     }
 }
+
+
+/* V2 data provenance and quality indicators */
+.status.warning {
+    color: #b7791f;
+}
+
+.v2-data-integrity-note {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-soft);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+}
+
+.v2-data-integrity-note strong {
+    color: var(--text);
+    font-size: 13px;
+}
+
+.v2-data-integrity-note p {
+    margin: 0;
+}
+
+.v2-data-integrity-note .v2-data-integrity-disclaimer {
+    margin-top: 4px;
+    padding-top: 9px;
+    border-top: 1px solid var(--border);
+}
