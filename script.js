@@ -2878,10 +2878,13 @@ function renderDividendsV2(response, profileResponse, index, symbol) {
 
         for (let value = 0; value <= axis.max + axis.step * 0.001; value += axis.step) {
             const y = yAt(value);
-            ctx.beginPath();
-            ctx.moveTo(padding.left, y);
-            ctx.lineTo(width - padding.right, y);
-            ctx.stroke();
+            // Tampilkan angka setiap Rp10, tetapi gambar garis bantu hanya tiap Rp20.
+            if (Math.round(value / 20) * 20 === Math.round(value)) {
+                ctx.beginPath();
+                ctx.moveTo(padding.left, y);
+                ctx.lineTo(width - padding.right, y);
+                ctx.stroke();
+            }
             ctx.fillText("Rp" + new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(value), padding.left - 8, y + 4);
         }
 
@@ -3096,27 +3099,37 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
         }
 
         const dates = Array.from(new Set(allPoints.map(item => item.time))).sort((a, b) => a - b);
-        const axis = sharedDividendAxis;
-        const padding = { top: 30, right: 25, bottom: 45, left: 65 };
+        const values = allPoints.map(item => item.value).filter(Number.isFinite);
+        let min = Math.min(...values);
+        let max = Math.max(...values);
+        if (min === max) {
+            min -= 1;
+            max += 1;
+        }
+
+        // Samakan skala dan pola sumbu dengan grafik price history.
+        const padding = { top: 30, right: 25, bottom: 45, left: 60 };
         const chartWidth = width - padding.left - padding.right;
         const chartHeight = height - padding.top - padding.bottom;
         const xAt = time => dates.length <= 1
             ? padding.left + chartWidth / 2
             : padding.left + dates.indexOf(time) / (dates.length - 1) * chartWidth;
-        const yAt = value => padding.top + (axis.max - value) / axis.max * chartHeight;
+        const yAt = value => padding.top + ((max - value) / (max - min)) * chartHeight;
 
+        const gridLines = 5;
         ctx.lineWidth = 1;
         ctx.strokeStyle = border;
         ctx.fillStyle = muted;
         ctx.font = "10px system-ui, sans-serif";
         ctx.textAlign = "right";
-        for (let value = 0; value <= axis.max + axis.step * 0.001; value += axis.step) {
-            const y = yAt(value);
+        for (let i = 0; i <= gridLines; i++) {
+            const y = padding.top + (chartHeight / gridLines) * i;
+            const value = max - ((max - min) / gridLines) * i;
             ctx.beginPath();
             ctx.moveTo(padding.left, y);
             ctx.lineTo(width - padding.right, y);
             ctx.stroke();
-            ctx.fillText("Rp" + new Intl.NumberFormat("id-ID", {maximumFractionDigits: 2}).format(value), padding.left - 8, y + 4);
+            ctx.fillText("Rp" + new Intl.NumberFormat("id-ID", {maximumFractionDigits: 0}).format(Math.round(value)), padding.left - 8, y + 4);
         }
 
         const drawLine = (items, color) => {
