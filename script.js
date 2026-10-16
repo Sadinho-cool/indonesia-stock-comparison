@@ -161,7 +161,7 @@ async function fetchType(symbol, type) {
         `${API_URL}/?symbol=${encodeURIComponent(symbol)}&type=${encodeURIComponent(type)}`;
 
 
-    const response = await fetch(url);
+    const response = await fetch(url, { cache: "no-store" });
 
 
     if (!response.ok) {
