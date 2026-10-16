@@ -50,7 +50,7 @@ Proyek ini terus dikembangkan dan direncanakan memiliki fitur **comparison, stoc
 
 ### V2 — Stock Comparison
 
-* Membandingkan beberapa emiten
+* Membandingkan dua emiten dalam satu sesi
 * Perbandingan harga
 * Dividend Yield
 * PER
@@ -60,6 +60,9 @@ Proyek ini terus dikembangkan dan direncanakan memiliki fitur **comparison, stoc
 * DER
 * Revenue
 * Net Profit
+* Mempertahankan format/satuan fundamental dari penyedia
+* Menampilkan sumber dan timestamp data
+* Menandai endpoint gagal dan format angka yang belum terverifikasi
 
 ### V3 — Stock Screener
 
@@ -111,6 +114,10 @@ ROE > 10%
 ### V8 — Indonesia Stock Intelligence Platform
 
 Menggabungkan seluruh fitur menjadi satu platform analisis saham Indonesia.
+
+* Perbandingan lanjutan 3+ emiten dalam satu tampilan
+* Dukungan tabel dan grafik dinamis untuk banyak emiten
+* Ringkasan analisis lintas emiten yang tetap menunjukkan sumber, periode, dan keterbatasan data
 
 ---
 
