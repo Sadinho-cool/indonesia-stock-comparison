@@ -14,7 +14,6 @@ const API_URL =
 
 const TYPES = [
     "summary",
-    "logo",
     "profile",
     "history",
     "fundamentals",
