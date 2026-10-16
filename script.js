@@ -162,18 +162,21 @@ async function fetchType(symbol, type) {
 
 
     const response = await fetch(url, { cache: "no-store" });
-
+    const cacheStatus = response.headers.get("x-isc-api-cache") || "UNKNOWN";
 
     if (!response.ok) {
-
         throw new Error(
-            `${type}: HTTP ${response.status}`
+            `${type}: HTTP ${response.status} (cache ${cacheStatus})`
         );
-
     }
 
-
     const json = await response.json();
+
+    // The Worker exposes whether this response came from its permanent KV cache.
+    // This marker is UI metadata only; it does not alter the provider's data fields.
+    if (json && typeof json === "object" && !Array.isArray(json)) {
+        json.__iscCacheStatus = cacheStatus;
+    }
 
 
     if (
@@ -2742,6 +2745,7 @@ function renderFundamentalIntegrityNote(response1, symbol1, response2, symbol2) 
         const details = [`${symbol}: sumber ${source}`];
         if (data.lastUpdated) details.push(`pembaruan penyedia: ${data.lastUpdated}`);
         if (response.timestamp) details.push(`timestamp respons: ${formatApiTimestampV2(response.timestamp)}`);
+        if (response.__iscCacheStatus) details.push(`cache Worker: ${response.__iscCacheStatus}`);
         return details.join(" • ") + ".";
     };
 
@@ -2756,7 +2760,8 @@ function renderFundamentalIntegrityNote(response1, symbol1, response2, symbol2) 
     disclaimer.textContent =
         "Metrik dipertahankan dalam format dan satuan yang diberikan penyedia (mis. %, x, atau Rp). " +
         "Jika format satuan tidak sesuai skema yang dikenal, nilainya ditandai dan tidak ditebak. " +
-        "Periode ringkasan fundamental dapat berbeda antar-metrik; gunakan laporan keuangan resmi untuk memeriksa periode dan konteksnya.";
+        "Periode ringkasan fundamental dapat berbeda antar-metrik; gunakan laporan keuangan resmi untuk memeriksa periode dan konteksnya. " +
+        "Cache Worker proyek ini disimpan tanpa kedaluwarsa otomatis selama pengembangan. Status HIT berarti respons diambil dari cache, bukan permintaan baru ke penyedia, sehingga datanya bisa usang.";
     note.appendChild(disclaimer);
 }
 
@@ -4146,12 +4151,23 @@ async function compareStocksV2(restoreOnly = false) {
                 ...getEndpointFailureSummary(stockData2, stock2)
             ];
 
+            const cacheHits = [
+                ...TYPES.filter(type => stockData1?.[type]?.__iscCacheStatus === "HIT").map(type => `${stock1} ${type}`),
+                ...TYPES.filter(type => stockData2?.[type]?.__iscCacheStatus === "HIT").map(type => `${stock2} ${type}`)
+            ];
+
             if (endpointFailures.length) {
                 status.className = "status warning";
                 status.textContent =
                     "Perbandingan tampil, tetapi data belum lengkap. Gagal mengambil " +
                     endpointFailures.join("; ") +
                     ". Nilai yang tidak tersedia tidak dianggap nol.";
+            } else if (cacheHits.length) {
+                status.className = "status warning";
+                status.textContent =
+                    "Perbandingan tampil, tetapi sebagian respons berasal dari cache Worker permanen (" +
+                    cacheHits.join(", ") +
+                    "). Data bisa usang; cek timestamp dan sumber sebelum menganggapnya terbaru.";
             } else {
                 status.className = "status success";
                 status.textContent = cachedComparison
