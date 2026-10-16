@@ -3893,8 +3893,8 @@ async function compareStocksV2(restoreOnly = false) {
     if (button) button.disabled = true;
     if (buttonText) buttonText.textContent = "Memuat data...";
 
-    // Cache hanya dipakai saat pemulihan otomatis setelah halaman dibuka ulang.
-    // Klik tombol Bandingkan secara sengaja tetap mengambil data terbaru dari API.
+    // Saat halaman dibuka ulang, tampilkan snapshot lokal terlebih dahulu.
+    // Setelah UI pulih, jalankan perbandingan normal agar data diperbarui sesuai TTL cache HTTP/Worker.
     const cachedComparison = restoreOnly ? readComparisonCache(stock1, stock2) : null;
 
     if (restoreOnly && !cachedComparison) return;
@@ -3980,8 +3980,22 @@ async function compareStocksV2(restoreOnly = false) {
         if (status) {
             status.className = "status success";
             status.textContent = cachedComparison
-                ? "Perbandingan dipulihkan dari penyimpanan lokal; tidak ada request API baru."
+                ? "Data tersimpan ditampilkan; pemeriksaan pembaruan akan berjalan otomatis."
                 : "Data berhasil diperbarui dan disimpan di browser.";
+        }
+
+        if (restoreOnly && cachedComparison) {
+            // Re-fetch through the normal flow after the cached UI is visible.
+            // Browser/Worker cache policies decide whether the upstream API is needed.
+            setTimeout(() => {
+                const sameComparison =
+                    cleanSymbol($("stock1")?.value) === stock1 &&
+                    cleanSymbol($("stock2")?.value) === stock2;
+
+                if (sameComparison) {
+                    compareStocksV2(false);
+                }
+            }, 0);
         }
 
         if (!restoreOnly) {
