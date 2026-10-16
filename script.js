@@ -4008,7 +4008,7 @@ function restoreLastComparison() {
     }
 }
 
-async function getEndpointFailureSummary(stockData, symbol) {
+function getEndpointFailureSummary(stockData, symbol) {
     const labels = {
         summary: "ringkasan pasar",
         profile: "profil perusahaan",
@@ -4023,7 +4023,7 @@ async function getEndpointFailureSummary(stockData, symbol) {
         .map(type => `${symbol}: ${labels[type]} (${stockData[type].message || "gagal"})`);
 }
 
-function compareStocksV2(restoreOnly = false) {
+async function compareStocksV2(restoreOnly = false) {
     const stock1 = cleanSymbol($("stock1")?.value);
     const stock2 = cleanSymbol($("stock2")?.value);
 
