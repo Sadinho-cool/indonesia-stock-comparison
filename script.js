@@ -2926,12 +2926,10 @@ function renderProfileV2(response, index, symbol) {
     const profile =
         response && !response.__error ? response.data : null;
 
-    if (!profile) return;
-
     const card = $("profileLogo" + suffix)?.closest(".profile-card");
     if (!card) return;
 
-    const shareholders = safeArray(profile.shareholders);
+    const shareholders = safeArray(profile && profile.shareholders);
     let wrapper = card.querySelector(".v2-shareholders");
     if (!wrapper) {
         wrapper = document.createElement("div");
@@ -2944,7 +2942,7 @@ function renderProfileV2(response, index, symbol) {
     heading.textContent = "Pemegang saham utama";
     wrapper.appendChild(heading);
 
-    if (shareholders.length === 0) {
+    if (!profile || shareholders.length === 0) {
         const empty = document.createElement("p");
         empty.textContent = "Belum tersedia";
         wrapper.appendChild(empty);
