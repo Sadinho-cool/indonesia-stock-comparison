@@ -3469,8 +3469,8 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
           .slice(-8);
     };
 
-    const first = supplementKnownDividendEventsV2(symbol1, getDividends(response1, profile1, symbol1));
-    const second = supplementKnownDividendEventsV2(symbol2, getDividends(response2, profile2, symbol2));
+    const first = getDividends(response1, profile1, symbol1);
+    const second = getDividends(response2, profile2, symbol2);
     sharedDividendAxis = calculateSharedDividendAxis(
         first.concat(second).map(item => item.value)
     );
