@@ -2713,7 +2713,7 @@ function calculateDebtToEquityV2(financialResponse) {
         ratio: liabilities / equity,
         percent: liabilities / equity * 100,
         period: String(latest.timeframe || "Periode terbaru")
-            .replace(/\\s+/g, " ")
+            .replace(/\s+/g, " ")
             .replace(/[’‘]/g, "'")
             .trim(),
         assets,
@@ -2736,9 +2736,11 @@ function renderFundamentalsV2(response, index, symbol, dividendsResponse, summar
     const data = parseFundamentalsV2(response);
     const derAudit = calculateDebtToEquityV2(financialResponse);
     const yieldAudit = auditDividendYieldV2(response, dividendsResponse, summaryResponse);
-    const yieldValue = yieldAudit && yieldAudit.needsReview
-        ? "Perlu verifikasi"
-        : v2MetricValue(data.dividendYield, "percent");
+    const yieldValue = yieldAudit && yieldAudit.useEventEstimate
+        ? "Estimasi " + formatPercentValueV2(yieldAudit.eventYield)
+        : yieldAudit && yieldAudit.needsReview
+            ? "Perlu verifikasi"
+            : v2MetricValue(data.dividendYield, "percent");
 
     ensureFundamentalRows();
 
@@ -2819,8 +2821,10 @@ function renderFundamentalIntegrityNote(
             details.push(`yield penyedia ${yieldAudit.providerYield.toFixed(2)}%`);
             details.push(`estimasi dari event Ex Date yang tersedia ${yieldAudit.eventYield.toFixed(2)}%`);
             details.push(`jumlah event dihitung ${yieldAudit.eventCount}`);
-            if (yieldAudit.needsReview) {
-                details.push("PERLU VERIFIKASI: yield penyedia berbeda lebih dari 2 poin persentase dari daftar dividen yang tersedia");
+            if (yieldAudit.useEventEstimate) {
+                details.push("Tabel memakai estimasi berbasis event Ex Date karena ada event lebih baru daripada tanggal pembaruan fundamental; ini estimasi, bukan angka yield resmi penyedia");
+            } else if (yieldAudit.needsReview) {
+                details.push("PERLU VERIFIKASI: yield penyedia berbeda lebih dari 2 poin persentase dari event yang tersedia; daftar event mungkin belum lengkap");
             }
         } else {
             details.push("audit yield 12 bulan tidak cukup data; nilai penyedia belum dapat dicocokkan");
@@ -2982,7 +2986,7 @@ function auditDividendYieldV2(fundamentalsResponse, dividendsResponse, summaryRe
     }
 
     const start = end - 365 * 24 * 60 * 60 * 1000;
-    const events = safeArray(dividendsResponse.data && dividendsResponse.data.past)
+    const allEvents = safeArray(dividendsResponse.data && dividendsResponse.data.past)
         .filter(item => item && item.type === "DIVIDEND")
         .map(item => {
             const fields = item.fields || {};
@@ -2994,16 +2998,35 @@ function auditDividendYieldV2(fundamentalsResponse, dividendsResponse, summaryRe
         .filter(item =>
             Number.isFinite(item.amount) &&
             item.amount >= 0 &&
-            item.exDate !== null &&
-            item.exDate > start &&
-            item.exDate <= end
+            item.exDate !== null
         );
 
+    const events = allEvents.filter(item => item.exDate > start && item.exDate <= end);
     if (!events.length) return null;
 
     const eventTotal = events.reduce((total, item) => total + item.amount, 0);
     const eventYield = eventTotal / price * 100;
     if (!Number.isFinite(eventYield)) return null;
+
+    const fundamentalUpdatedText = String(data.lastUpdated || "")
+        .replace(/^Last updated on\s*/i, "");
+    const fundamentalUpdatedAt = parseDividendDateUTCV2(fundamentalUpdatedText);
+    const latestHistoricalEventDate = allEvents
+        .filter(item => item.exDate <= end)
+        .reduce((latest, item) => latest === null || item.exDate > latest ? item.exDate : latest, null);
+    const latestEventAfterFundamentalUpdate =
+        fundamentalUpdatedAt !== null &&
+        latestHistoricalEventDate !== null &&
+        latestHistoricalEventDate > fundamentalUpdatedAt;
+
+    const difference = Math.abs(providerYield - eventYield);
+    const needsReview = difference > 2;
+    // If event data includes a dividend record newer than the fundamental update,
+    // prefer a clearly labelled event-based estimate when the provider yield is lower.
+    const useEventEstimate =
+        needsReview &&
+        eventYield > providerYield &&
+        latestEventAfterFundamentalUpdate;
 
     return {
         providerYield,
@@ -3012,7 +3035,10 @@ function auditDividendYieldV2(fundamentalsResponse, dividendsResponse, summaryRe
         eventCount: events.length,
         price,
         referenceDate: summary.Date,
-        needsReview: Math.abs(providerYield - eventYield) > 2
+        needsReview,
+        useEventEstimate,
+        latestEventAfterFundamentalUpdate,
+        difference
     };
 }
 
