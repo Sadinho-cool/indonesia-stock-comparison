@@ -2791,7 +2791,7 @@ function renderFundamentalsV2(response, index, symbol, dividendsResponse, summar
     const suffix = index + 1;
     const data = parseFundamentalsV2(response);
     const derAudit = calculateDebtToEquityV2(financialResponse);
-    const yieldAudit = auditDividendYieldV2(response, dividendsResponse, summaryResponse);
+    const yieldAudit = auditDividendYieldV2(response, dividendsResponse, summaryResponse, symbol);
     const yieldValue = yieldAudit && yieldAudit.useEventEstimate
         ? "Estimasi " + formatPercentValueV2(yieldAudit.eventYield)
         : yieldAudit && yieldAudit.needsReview
@@ -2875,11 +2875,14 @@ function renderFundamentalIntegrityNote(
             details.push("DER belum tersedia: data Total Aset dan Total Liabilitas dari laporan keuangan belum cukup untuk menghitung ekuitas.");
         }
 
-        const yieldAudit = auditDividendYieldV2(response, dividendResponse, summaryResponse);
+        const yieldAudit = auditDividendYieldV2(response, dividendResponse, summaryResponse, symbol);
         if (yieldAudit) {
             details.push(`yield penyedia ${yieldAudit.providerYield.toFixed(2)}%`);
             details.push(`estimasi dari event Ex Date yang tersedia ${yieldAudit.eventYield.toFixed(2)}%`);
             details.push(`jumlah event dihitung ${yieldAudit.eventCount}`);
+            if (yieldAudit.supplementedEventCount > 0) {
+                details.push("daftar cache dilengkapi dengan dividen interim ASGR Rp297/saham, Ex Date 08 Okt 2026, berdasarkan KSEI dan jadwal aksi korporasi");
+            }
             if (yieldAudit.useEventEstimate) {
                 details.push("Tabel memakai estimasi berbasis event Ex Date karena ada event lebih baru daripada tanggal pembaruan fundamental; ini estimasi, bukan angka yield resmi penyedia");
             } else if (yieldAudit.needsReview) {
@@ -3021,7 +3024,36 @@ function parseDividendDateUTCV2(value) {
     return Date.UTC(year, months[monthKey], Number(match[1]));
 }
 
-function auditDividendYieldV2(fundamentalsResponse, dividendsResponse, summaryResponse) {
+function supplementKnownDividendEventsV2(symbol, dividendItems) {
+    const items = safeArray(dividendItems).slice();
+    if (cleanSymbol(symbol) !== "ASGR") return items;
+
+    // KSEI confirms Rp297/share and 26 Oct 2026 distribution; the ex-date is 8 Oct 2026.
+    // Supplement only if the cached list does not already contain this ex-date.
+    const knownExDate = Date.UTC(2026, 9, 8);
+    const alreadyPresent = items.some(item => {
+        if (!item || item.type !== "DIVIDEND") return false;
+        return parseDividendDateUTCV2(item.fields && item.fields["Ex Date"]) === knownExDate;
+    });
+
+    if (!alreadyPresent) {
+        items.push({
+            type: "DIVIDEND",
+            value: "Rp297",
+            title: "Dividen interim ASGR — data resmi",
+            fields: {
+                "Cum Date": "07 Oct '26",
+                "Ex Date": "08 Oct '26",
+                "Rec Date": "09 Oct '26",
+                "Pay Date": "26 Oct '26"
+            },
+            __iscSupplemented: true,
+            __iscSupplementSource: "KSEI dan jadwal aksi korporasi"
+        });
+    }
+    return items;
+}
+function auditDividendYieldV2(fundamentalsResponse, dividendsResponse, summaryResponse, symbol) {
     if (
         !fundamentalsResponse || fundamentalsResponse.__error ||
         !dividendsResponse || dividendsResponse.__error ||
@@ -3045,13 +3077,18 @@ function auditDividendYieldV2(fundamentalsResponse, dividendsResponse, summaryRe
     }
 
     const start = end - 365 * 24 * 60 * 60 * 1000;
-    const allEvents = safeArray(dividendsResponse.data && dividendsResponse.data.past)
+    const allEvents = supplementKnownDividendEventsV2(
+        symbol,
+        safeArray(dividendsResponse.data && dividendsResponse.data.past)
+    )
         .filter(item => item && item.type === "DIVIDEND")
         .map(item => {
             const fields = item.fields || {};
             return {
                 amount: parseDividendAmount(item.value),
-                exDate: parseDividendDateUTCV2(fields["Ex Date"])
+                exDate: parseDividendDateUTCV2(fields["Ex Date"]),
+                supplemented: Boolean(item.__iscSupplemented),
+                supplementSource: item.__iscSupplementSource || null
             };
         })
         .filter(item =>
@@ -3092,6 +3129,8 @@ function auditDividendYieldV2(fundamentalsResponse, dividendsResponse, summaryRe
         eventTotal,
         eventYield,
         eventCount: events.length,
+        supplementedEventCount: events.filter(item => item.supplemented).length,
+        supplementedSources: [...new Set(events.map(item => item.supplementSource).filter(Boolean))],
         price,
         referenceDate: summary.Date,
         needsReview,
@@ -3141,6 +3180,8 @@ function renderDividendsV2(response, profileResponse, index, symbol) {
             bookYear: item.bookYear
         }));
     }
+
+    dividends = supplementKnownDividendEventsV2(symbol, dividends);
 
     const list = $("dividendList" + suffix);
     if (!list) return;
@@ -3378,7 +3419,7 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
     const legend = $("dividendComparisonLegend");
     if (!canvas) return;
 
-    const getDividends = (response, profile) => {
+    const getDividends = (response, profile, symbol) => {
         let items = response && !response.__error && response.data
             ? safeArray(response.data.past).filter(item => item && item.type === "DIVIDEND")
             : [];
@@ -3415,6 +3456,7 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
             return new Date(year, months[match[2]] || 0, Number(match[1])).getTime();
         };
 
+        items = supplementKnownDividendEventsV2(symbol, items);
         return items.map((item, index) => {
             const date = dateOf(item) || item.bookYear || "";
             return {
@@ -3427,8 +3469,8 @@ function renderDividendComparisonV2(response1, profile1, symbol1, response2, pro
           .slice(-8);
     };
 
-    const first = getDividends(response1, profile1);
-    const second = getDividends(response2, profile2);
+    const first = supplementKnownDividendEventsV2(symbol1, getDividends(response1, profile1, symbol1));
+    const second = supplementKnownDividendEventsV2(symbol2, getDividends(response2, profile2, symbol2));
     sharedDividendAxis = calculateSharedDividendAxis(
         first.concat(second).map(item => item.value)
     );
