@@ -2199,3 +2199,16 @@ footer small {
     padding-top: 9px;
     border-top: 1px solid var(--border);
 }
+
+
+/* Financial data period interpretation note */
+.financial-period-note {
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-soft);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.65;
+}
