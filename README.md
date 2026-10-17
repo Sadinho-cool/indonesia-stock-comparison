@@ -171,7 +171,7 @@ Data yang digunakan dalam aplikasi dapat mencakup:
 
 Ketersediaan data dapat berbeda untuk setiap emiten dan endpoint.
 
-Dalam mode pengembangan, respons Cloudflare Worker disimpan di KV tanpa kedaluwarsa otomatis untuk menghemat kuota API. Karena itu, status cache `HIT` berarti respons lama dari cache digunakan kembali; **data tidak dijamin real-time**. Aplikasi menampilkan status cache, sumber/timestamp fundamental yang tersedia, dan memperlakukan angka dengan format satuan yang belum dikenal sebagai belum terverifikasi. Untuk keputusan penting, periksa laporan keuangan resmi dan tanggal data sumber.
+Dalam mode pengembangan, respons Cloudflare Worker disimpan di KV tanpa kedaluwarsa otomatis untuk menghemat kuota API. Karena itu, status cache `HIT` berarti respons lama dari cache digunakan kembali; **data tidak dijamin real-time**. Aplikasi menampilkan status cache, sumber/timestamp fundamental yang tersedia, dan memperlakukan angka dengan format satuan yang belum dikenal sebagai belum terverifikasi. Audit tambahan membandingkan Dividend Yield penyedia dengan jumlah event dividen Ex Date yang tersedia selama 365 hari; selisih lebih dari 2 poin persentase ditandai untuk verifikasi, bukan otomatis diganti. Data laporan keuangan juga perlu dibaca dengan basis periode yang benar: untuk sampel laporan laba rugi Q2 2026 yang diverifikasi, angka cocok dengan kumulatif 6 bulan (6M), bukan kuartal tunggal. Untuk keputusan penting, periksa laporan keuangan resmi dan tanggal data sumber.
 
 ---
 
