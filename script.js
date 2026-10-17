@@ -2609,7 +2609,7 @@ function ensureFundamentalRows() {
     const rows = [
         ["ROE (%)", "tableRoe1", "tableRoe2"],
         ["ROA (%)", "tableRoa1", "tableRoa2"],
-        ["DER (unit/perhitungan perlu verifikasi)", "tableDer1", "tableDer2"],
+        ["DER (Total Liabilitas / Ekuitas, %)", "tableDer1", "tableDer2"],
         ["Revenue (periode sumber tidak dicantumkan)", "tableRevenue1", "tableRevenue2"],
         ["Net Profit (periode sumber tidak dicantumkan)", "tableNetProfit1", "tableNetProfit2"]
     ];
@@ -2682,9 +2682,59 @@ function renderSummaryV2(response, index, symbol) {
     setText("tableForeignSell" + suffix, formatNumber(data.foreignSell));
 }
 
-function renderFundamentalsV2(response, index, symbol, dividendsResponse, summaryResponse) {
+function calculateDebtToEquityV2(financialResponse) {
+    if (!financialResponse || financialResponse.__error) return null;
+
+    const rows = safeArray(
+        financialResponse.data &&
+        financialResponse.data.quarterly &&
+        financialResponse.data.quarterly.balanceSheet &&
+        financialResponse.data.quarterly.balanceSheet.chart
+    );
+
+    const latest = [...rows].reverse().find(row => {
+        const assets = Number(row && row.assets);
+        const liabilities = Number(row && row.liabilities);
+        return Number.isFinite(assets) &&
+            Number.isFinite(liabilities) &&
+            assets > 0 &&
+            liabilities >= 0 &&
+            assets > liabilities;
+    });
+
+    if (!latest) return null;
+
+    const assets = Number(latest.assets);
+    const liabilities = Number(latest.liabilities);
+    const equity = assets - liabilities;
+    if (!(equity > 0)) return null;
+
+    return {
+        ratio: liabilities / equity,
+        percent: liabilities / equity * 100,
+        period: String(latest.timeframe || "Periode terbaru")
+            .replace(/\\s+/g, " ")
+            .replace(/[’‘]/g, "'")
+            .trim(),
+        assets,
+        liabilities,
+        equity,
+        source: financialResponse.data.source || "penyedia laporan keuangan"
+    };
+}
+
+function formatPercentValueV2(value) {
+    if (!Number.isFinite(value)) return "Belum tersedia";
+    return new Intl.NumberFormat("id-ID", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    }).format(value) + "%";
+}
+
+function renderFundamentalsV2(response, index, symbol, dividendsResponse, summaryResponse, financialResponse) {
     const suffix = index + 1;
     const data = parseFundamentalsV2(response);
+    const derAudit = calculateDebtToEquityV2(financialResponse);
     const yieldAudit = auditDividendYieldV2(response, dividendsResponse, summaryResponse);
     const yieldValue = yieldAudit && yieldAudit.needsReview
         ? "Perlu verifikasi"
@@ -2701,14 +2751,14 @@ function renderFundamentalsV2(response, index, symbol, dividendsResponse, summar
     setText("tablePbv" + suffix, v2MetricValue(data.pbv, "multiple"));
     setText("tableRoe" + suffix, v2MetricValue(data.roe, "percent"));
     setText("tableRoa" + suffix, v2MetricValue(data.roa, "percent"));
-    setText("tableDer" + suffix, "Perlu verifikasi");
+    setText("tableDer" + suffix, derAudit ? formatPercentValueV2(derAudit.percent) : "Perlu verifikasi");
     setText("tableRevenue" + suffix, v2MetricValue(data.revenue, "currency"));
     setText("tableNetProfit" + suffix, v2MetricValue(data.netProfit, "currency"));
 }
 
 function renderFundamentalIntegrityNote(
-    response1, symbol1, dividends1, summary1,
-    response2, symbol2, dividends2, summary2
+    response1, symbol1, dividends1, summary1, financial1,
+    response2, symbol2, dividends2, summary2, financial2
 ) {
     const note = $("v2DataIntegrityNote");
     if (!note) return;
@@ -2719,7 +2769,7 @@ function renderFundamentalIntegrityNote(
     heading.textContent = "Transparansi dan kualitas data";
     note.appendChild(heading);
 
-    const describeSource = (response, symbol, dividendResponse, summaryResponse) => {
+    const describeSource = (response, symbol, dividendResponse, summaryResponse, financialResponse) => {
         if (!response || response.__error) {
             const reason = response?.message || "sumber fundamental tidak tersedia";
             return `${symbol}: data fundamental gagal dimuat (${reason}). Angka terkait tidak ditampilkan.`;
@@ -2754,7 +2804,14 @@ function renderFundamentalIntegrityNote(
         if (response.__iscCacheStatus) details.push(`cache Worker: ${response.__iscCacheStatus}`);
         const rawDER = data.ratios && data.ratios.solvency ? data.ratios.solvency.de : null;
         if (rawDER !== null && rawDER !== undefined && rawDER !== "") {
-            details.push(`DER mentah dari penyedia: ${v2Value(rawDER)} (ditahan dari tabel karena unit/perhitungannya perlu diverifikasi)`);
+            details.push(`DER mentah penyedia: ${v2Value(rawDER)} (tidak dipakai karena format/unitnya tidak konsisten dengan hitungan neraca)`);
+        }
+
+        const derAudit = calculateDebtToEquityV2(financialResponse);
+        if (derAudit) {
+            details.push(`DER hitungan neraca ${derAudit.period}: ${formatPercentValueV2(derAudit.percent)} = Total Liabilitas ÷ Total Ekuitas (Ekuitas = Total Aset − Total Liabilitas)`);
+        } else {
+            details.push("DER belum tersedia: data Total Aset dan Total Liabilitas dari laporan keuangan belum cukup untuk menghitung ekuitas.");
         }
 
         const yieldAudit = auditDividendYieldV2(response, dividendResponse, summaryResponse);
@@ -2773,8 +2830,8 @@ function renderFundamentalIntegrityNote(
     };
 
     [
-        describeSource(response1, symbol1, dividends1, summary1),
-        describeSource(response2, symbol2, dividends2, summary2)
+        describeSource(response1, symbol1, dividends1, summary1, financial1),
+        describeSource(response2, symbol2, dividends2, summary2, financial2)
     ].forEach(line => {
         const paragraph = document.createElement("p");
         paragraph.textContent = line;
@@ -2786,7 +2843,7 @@ function renderFundamentalIntegrityNote(
     disclaimer.textContent =
         "Estimasi yield pembanding = total dividen dengan Ex Date dalam 365 hari sampai tanggal harga referensi dibagi harga penutupan. Ini audit kelengkapan daftar event yang diterima, bukan pengganti angka resmi; daftar dividen penyedia yang tidak lengkap dapat membuat estimasi lebih rendah. " +
         "Metrik dipertahankan dalam format dan satuan yang diberikan penyedia (mis. %, x, atau Rp). " +
-        "Jika format satuan tidak sesuai skema yang dikenal, nilainya ditandai dan tidak ditebak. DER ditahan dari tabel karena nilai dan satuan sumber belum dapat dipastikan konsisten dengan laporan keuangan. " +
+        "Jika format satuan tidak sesuai skema yang dikenal, nilainya ditandai dan tidak ditebak. DER pada tabel dihitung dari Total Liabilitas dibagi Total Ekuitas, dengan Ekuitas = Total Aset − Total Liabilitas; angka DER mentah penyedia tidak dipakai bila format/unitnya tidak konsisten. " +
         "Periode ringkasan fundamental dapat berbeda antar-metrik; gunakan laporan keuangan resmi untuk memeriksa periode dan konteksnya. " +
         "Cache Worker proyek ini disimpan tanpa kedaluwarsa otomatis selama pengembangan. Status HIT berarti respons diambil dari cache, bukan permintaan baru ke penyedia, sehingga datanya bisa usang.";
     note.appendChild(disclaimer);
@@ -4199,15 +4256,15 @@ async function compareStocksV2(restoreOnly = false) {
 
         renderFundamentalsV2(
             stockData1.fundamentals, 0, stock1,
-            stockData1.dividends, stockData1.summary
+            stockData1.dividends, stockData1.summary, stockData1.financial
         );
         renderFundamentalsV2(
             stockData2.fundamentals, 1, stock2,
-            stockData2.dividends, stockData2.summary
+            stockData2.dividends, stockData2.summary, stockData2.financial
         );
         renderFundamentalIntegrityNote(
-            stockData1.fundamentals, stock1, stockData1.dividends, stockData1.summary,
-            stockData2.fundamentals, stock2, stockData2.dividends, stockData2.summary
+            stockData1.fundamentals, stock1, stockData1.dividends, stockData1.summary, stockData1.financial,
+            stockData2.fundamentals, stock2, stockData2.dividends, stockData2.summary, stockData2.financial
         );
 
         renderProfileV2(stockData1.profile, 0, stock1);
