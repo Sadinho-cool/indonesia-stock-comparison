@@ -2609,7 +2609,7 @@ function ensureFundamentalRows() {
     const rows = [
         ["ROE (%)", "tableRoe1", "tableRoe2"],
         ["ROA (%)", "tableRoa1", "tableRoa2"],
-        ["DER (%)", "tableDer1", "tableDer2"],
+        ["DER (unit/perhitungan perlu verifikasi)", "tableDer1", "tableDer2"],
         ["Revenue (periode sumber tidak dicantumkan)", "tableRevenue1", "tableRevenue2"],
         ["Net Profit (periode sumber tidak dicantumkan)", "tableNetProfit1", "tableNetProfit2"]
     ];
@@ -2701,7 +2701,7 @@ function renderFundamentalsV2(response, index, symbol, dividendsResponse, summar
     setText("tablePbv" + suffix, v2MetricValue(data.pbv, "multiple"));
     setText("tableRoe" + suffix, v2MetricValue(data.roe, "percent"));
     setText("tableRoa" + suffix, v2MetricValue(data.roa, "percent"));
-    setText("tableDer" + suffix, v2MetricValue(data.der, "percent"));
+    setText("tableDer" + suffix, "Perlu verifikasi");
     setText("tableRevenue" + suffix, v2MetricValue(data.revenue, "currency"));
     setText("tableNetProfit" + suffix, v2MetricValue(data.netProfit, "currency"));
 }
@@ -2736,7 +2736,6 @@ function renderFundamentalIntegrityNote(
             ["pbv", "multiple"],
             ["roe", "percent"],
             ["roa", "percent"],
-            ["der", "percent"],
             ["revenue", "currency"],
             ["netProfit", "currency"]
         ];
@@ -2753,6 +2752,10 @@ function renderFundamentalIntegrityNote(
         if (data.lastUpdated) details.push(`pembaruan penyedia: ${data.lastUpdated}`);
         if (response.timestamp) details.push(`timestamp respons: ${formatApiTimestampV2(response.timestamp)}`);
         if (response.__iscCacheStatus) details.push(`cache Worker: ${response.__iscCacheStatus}`);
+        const rawDER = data.ratios && data.ratios.solvency ? data.ratios.solvency.de : null;
+        if (rawDER !== null && rawDER !== undefined && rawDER !== "") {
+            details.push(`DER mentah dari penyedia: ${v2Value(rawDER)} (ditahan dari tabel karena unit/perhitungannya perlu diverifikasi)`);
+        }
 
         const yieldAudit = auditDividendYieldV2(response, dividendResponse, summaryResponse);
         if (yieldAudit) {
@@ -2783,7 +2786,7 @@ function renderFundamentalIntegrityNote(
     disclaimer.textContent =
         "Estimasi yield pembanding = total dividen dengan Ex Date dalam 365 hari sampai tanggal harga referensi dibagi harga penutupan. Ini audit kelengkapan daftar event yang diterima, bukan pengganti angka resmi; daftar dividen penyedia yang tidak lengkap dapat membuat estimasi lebih rendah. " +
         "Metrik dipertahankan dalam format dan satuan yang diberikan penyedia (mis. %, x, atau Rp). " +
-        "Jika format satuan tidak sesuai skema yang dikenal, nilainya ditandai dan tidak ditebak. " +
+        "Jika format satuan tidak sesuai skema yang dikenal, nilainya ditandai dan tidak ditebak. DER ditahan dari tabel karena nilai dan satuan sumber belum dapat dipastikan konsisten dengan laporan keuangan. " +
         "Periode ringkasan fundamental dapat berbeda antar-metrik; gunakan laporan keuangan resmi untuk memeriksa periode dan konteksnya. " +
         "Cache Worker proyek ini disimpan tanpa kedaluwarsa otomatis selama pengembangan. Status HIT berarti respons diambil dari cache, bukan permintaan baru ke penyedia, sehingga datanya bisa usang.";
     note.appendChild(disclaimer);
