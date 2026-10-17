@@ -2939,7 +2939,7 @@ function renderProfileV2(response, index, symbol) {
     wrapper.replaceChildren();
 
     const heading = document.createElement("span");
-    heading.textContent = "Pemegang saham utama";
+    heading.textContent = "Struktur kepemilikan saham";
     wrapper.appendChild(heading);
 
     if (!profile || shareholders.length === 0) {
@@ -2969,15 +2969,41 @@ function renderProfileV2(response, index, symbol) {
             meta.className = "document-meta";
 
             const percentage =
+                holder.sharePct ??
                 holder.percentage ??
                 holder.percent ??
                 holder.sharePercentage ??
                 holder.ownershipPercentage;
 
-            meta.textContent =
-                percentage === undefined
-                    ? "Persentase belum tersedia"
-                    : String(percentage) + "%";
+            let percentageText = "Persentase belum tersedia";
+            if (percentage !== undefined && percentage !== null && percentage !== "") {
+                const numericPercentage = Number(percentage);
+                if (Number.isFinite(numericPercentage)) {
+                    percentageText =
+                        new Intl.NumberFormat("id-ID", {
+                            maximumFractionDigits: 4
+                        }).format(numericPercentage) + "%";
+                } else {
+                    percentageText = String(percentage).trim();
+                    if (!percentageText.endsWith("%")) percentageText += "%";
+                }
+            }
+
+            const metaParts = [percentageText];
+            const shares = holder.shares ?? holder.shareCount ?? holder.numberOfShares;
+            if (shares !== undefined && shares !== null && shares !== "") {
+                const numericShares = Number(shares);
+                metaParts.push(
+                    Number.isFinite(numericShares)
+                        ? new Intl.NumberFormat("id-ID", {
+                            maximumFractionDigits: 0
+                        }).format(numericShares) + " saham"
+                        : String(shares)
+                );
+            }
+            if (holder.category) metaParts.push(String(holder.category));
+
+            meta.textContent = metaParts.join(" • ");
 
             info.appendChild(name);
             info.appendChild(meta);
