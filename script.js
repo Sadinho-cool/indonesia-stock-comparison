@@ -438,19 +438,21 @@ function renderProfile(
 
 
     if (!profile) {
+        const unavailable = "Belum tersedia";
 
-        setText(
-            `profileName${suffix}`,
-            symbol
-        );
+        setText(`profileName${suffix}`, symbol);
+        setText(`profileTicker${suffix}`, symbol);
+        setText(`sector${suffix}`, unavailable);
+        setText(`industry${suffix}`, unavailable);
+        setText(`employees${suffix}`, unavailable);
+        setText(`listingDate${suffix}`, unavailable);
+        setText(`listingBoard${suffix}`, unavailable);
+        setText(`description${suffix}`, unavailable);
 
-        setText(
-            `profileTicker${suffix}`,
-            symbol
-        );
-
+        renderWebsite(`website${suffix}`, null);
+        renderLogo(`profileLogo${suffix}`, null, symbol);
+        renderLogo(`logo${suffix}`, null, symbol);
         return;
-
     }
 
 
@@ -2852,14 +2854,16 @@ function renderFundamentalIntegrityNote(
             return value !== "Belum tersedia" && value !== "Format API belum terverifikasi";
         });
 
-        if (!hasVerifiableMetric) {
-            return `${symbol}: respons diterima, tetapi belum ada metrik fundamental yang dapat diverifikasi dari format datanya.`;
-        }
-
         const details = [`${symbol}: sumber ${source}`];
         if (data.lastUpdated) details.push(`pembaruan penyedia: ${data.lastUpdated}`);
         if (response.timestamp) details.push(`timestamp respons: ${formatApiTimestampV2(response.timestamp)}`);
         if (response.__iscCacheStatus) details.push(`cache Worker: ${response.__iscCacheStatus}`);
+
+        if (!hasVerifiableMetric) {
+            details.push("respons diterima, tetapi belum ada metrik fundamental yang dapat diverifikasi dari format datanya; angka tidak ditebak");
+            return details.join(" • ") + ".";
+        }
+
         const rawDER = data.ratios && data.ratios.solvency ? data.ratios.solvency.de : null;
         if (rawDER !== null && rawDER !== undefined && rawDER !== "") {
             details.push(`DER mentah penyedia: ${v2Value(rawDER)} (tidak dipakai karena format/unitnya tidak konsisten dengan hitungan neraca)`);
@@ -2925,11 +2929,16 @@ function renderProfileV2(response, index, symbol) {
     if (!profile) return;
 
     const card = $("profileLogo" + suffix)?.closest(".profile-card");
-    if (!card || card.querySelector(".v2-shareholders")) return;
+    if (!card) return;
 
     const shareholders = safeArray(profile.shareholders);
-    const wrapper = document.createElement("div");
-    wrapper.className = "business-description v2-shareholders";
+    let wrapper = card.querySelector(".v2-shareholders");
+    if (!wrapper) {
+        wrapper = document.createElement("div");
+        wrapper.className = "business-description v2-shareholders";
+        card.appendChild(wrapper);
+    }
+    wrapper.replaceChildren();
 
     const heading = document.createElement("span");
     heading.textContent = "Pemegang saham utama";
@@ -2981,7 +2990,6 @@ function renderProfileV2(response, index, symbol) {
         wrapper.appendChild(list);
     }
 
-    card.appendChild(wrapper);
 }
 
 
