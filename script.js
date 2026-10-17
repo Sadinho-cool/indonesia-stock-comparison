@@ -2682,44 +2682,100 @@ function renderSummaryV2(response, index, symbol) {
     setText("tableForeignSell" + suffix, formatNumber(data.foreignSell));
 }
 
+function parseFinancialAmountV2(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+    if (value === null || value === undefined) return NaN;
+
+    let raw = String(value).trim().replace(/^rp\s*/i, "").replace(/\s/g, "");
+    const match = raw.match(/^([-+]?)([\d.,]+)([KMBT])?$/i);
+    if (!match) return NaN;
+
+    const sign = match[1] === "-" ? -1 : 1;
+    raw = match[2];
+    const comma = raw.lastIndexOf(",");
+    const dot = raw.lastIndexOf(".");
+    if (comma >= 0 && dot >= 0) {
+        if (comma > dot) raw = raw.replace(/\./g, "").replace(",", ".");
+        else raw = raw.replace(/,/g, "");
+    } else if (comma >= 0) {
+        const decimals = raw.length - comma - 1;
+        raw = decimals <= 2 ? raw.replace(",", ".") : raw.replace(/,/g, "");
+    }
+
+    const number = Number(raw);
+    if (!Number.isFinite(number)) return NaN;
+
+    const multipliers = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
+    const multiplier = multipliers[String(match[3] || "").toUpperCase()] || 1;
+    return sign * number * multiplier;
+}
+
 function calculateDebtToEquityV2(financialResponse) {
     if (!financialResponse || financialResponse.__error) return null;
 
-    const rows = safeArray(
-        financialResponse.data &&
-        financialResponse.data.quarterly &&
-        financialResponse.data.quarterly.balanceSheet &&
-        financialResponse.data.quarterly.balanceSheet.chart
+    const data = financialResponse.data;
+    const balanceSheet = data && data.quarterly && data.quarterly.balanceSheet;
+    if (!balanceSheet) return null;
+
+    const chart = safeArray(balanceSheet.chart);
+    const latestChart = [...chart].reverse().find(row =>
+        Number.isFinite(Number(row && row.assets)) &&
+        Number.isFinite(Number(row && row.liabilities))
     );
+    const periodTables = safeArray(balanceSheet.table)
+        .filter(table => table && Array.isArray(table.items));
 
-    const latest = [...rows].reverse().find(row => {
-        const assets = Number(row && row.assets);
-        const liabilities = Number(row && row.liabilities);
-        return Number.isFinite(assets) &&
-            Number.isFinite(liabilities) &&
-            assets > 0 &&
-            liabilities >= 0 &&
-            assets > liabilities;
-    });
+    if (!periodTables.length) return null;
 
-    if (!latest) return null;
+    const normalizePeriod = value => String(value || "")
+        .replace(/\s+/g, " ")
+        .replace(/[’‘]/g, "'")
+        .trim()
+        .toLowerCase();
 
-    const assets = Number(latest.assets);
-    const liabilities = Number(latest.liabilities);
-    const equity = assets - liabilities;
-    if (!(equity > 0)) return null;
+    const latestPeriod = latestChart && normalizePeriod(latestChart.timeframe);
+    const table = periodTables.find(item =>
+        latestPeriod && normalizePeriod(item.title) === latestPeriod
+    ) || periodTables[periodTables.length - 1];
+
+    const amountFor = label => {
+        const row = table.items.find(item =>
+            String(item && item.column1 && item.column1.value || "")
+                .trim().toLowerCase() === label.toLowerCase()
+        );
+        return parseFinancialAmountV2(row && row.column2 && row.column2.value);
+    };
+
+    const assets = amountFor("Total Assets");
+    const liabilities = amountFor("Total Liabilities");
+    const equity = amountFor("Total Equity");
+    const reportedLiabilitiesAndEquity = amountFor("Total Liabilities & Total Equity");
+
+    if (![liabilities, equity].every(value => Number.isFinite(value) && value > 0)) {
+        return null;
+    }
+
+    const balanceTotal = Number.isFinite(reportedLiabilitiesAndEquity)
+        ? reportedLiabilitiesAndEquity
+        : liabilities + equity;
+    const balanceGapPercent = Number.isFinite(assets) && assets > 0
+        ? Math.abs(assets - balanceTotal) / assets * 100
+        : 0;
 
     return {
         ratio: liabilities / equity,
         percent: liabilities / equity * 100,
-        period: String(latest.timeframe || "Periode terbaru")
+        period: String(table.title || (latestChart && latestChart.timeframe) || "Periode terbaru")
             .replace(/\s+/g, " ")
             .replace(/[’‘]/g, "'")
             .trim(),
         assets,
         liabilities,
         equity,
-        source: financialResponse.data.source || "penyedia laporan keuangan"
+        reportedLiabilitiesAndEquity: balanceTotal,
+        balanceGapPercent,
+        consistencyWarning: balanceGapPercent > 5,
+        source: data.source || "penyedia laporan keuangan"
     };
 }
 
@@ -2753,7 +2809,7 @@ function renderFundamentalsV2(response, index, symbol, dividendsResponse, summar
     setText("tablePbv" + suffix, v2MetricValue(data.pbv, "multiple"));
     setText("tableRoe" + suffix, v2MetricValue(data.roe, "percent"));
     setText("tableRoa" + suffix, v2MetricValue(data.roa, "percent"));
-    setText("tableDer" + suffix, derAudit ? formatPercentValueV2(derAudit.percent) : "Perlu verifikasi");
+    setText("tableDer" + suffix, derAudit ? formatPercentValueV2(derAudit.percent) + (derAudit.consistencyWarning ? "*" : "") : "Perlu verifikasi");
     setText("tableRevenue" + suffix, v2MetricValue(data.revenue, "currency"));
     setText("tableNetProfit" + suffix, v2MetricValue(data.netProfit, "currency"));
 }
@@ -2768,7 +2824,7 @@ function renderFundamentalIntegrityNote(
     note.replaceChildren();
 
     const heading = document.createElement("strong");
-    heading.textContent = "Transparansi dan kualitas data";
+    heading.textContent = "Transparansi dan kualitas data — audit V2 aktif (17 Okt 2026)";
     note.appendChild(heading);
 
     const describeSource = (response, symbol, dividendResponse, summaryResponse, financialResponse) => {
@@ -2811,7 +2867,10 @@ function renderFundamentalIntegrityNote(
 
         const derAudit = calculateDebtToEquityV2(financialResponse);
         if (derAudit) {
-            details.push(`DER hitungan neraca ${derAudit.period}: ${formatPercentValueV2(derAudit.percent)} = Total Liabilitas ÷ Total Ekuitas (Ekuitas = Total Aset − Total Liabilitas)`);
+            details.push("DER dari laporan neraca " + derAudit.period + ": " + formatPercentValueV2(derAudit.percent) + " = Total Liabilitas ÷ Total Ekuitas yang dilaporkan.");
+            if (derAudit.consistencyWarning) {
+                details.push("PERINGATAN NERACA: Total Aset dan Total Liabilitas + Ekuitas berbeda sekitar " + formatPercentValueV2(derAudit.balanceGapPercent) + "; angka DER diberi tanda * dan perlu dicocokkan dengan laporan resmi.");
+            }
         } else {
             details.push("DER belum tersedia: data Total Aset dan Total Liabilitas dari laporan keuangan belum cukup untuk menghitung ekuitas.");
         }
@@ -2847,7 +2906,7 @@ function renderFundamentalIntegrityNote(
     disclaimer.textContent =
         "Estimasi yield pembanding = total dividen dengan Ex Date dalam 365 hari sampai tanggal harga referensi dibagi harga penutupan. Ini audit kelengkapan daftar event yang diterima, bukan pengganti angka resmi; daftar dividen penyedia yang tidak lengkap dapat membuat estimasi lebih rendah. " +
         "Metrik dipertahankan dalam format dan satuan yang diberikan penyedia (mis. %, x, atau Rp). " +
-        "Jika format satuan tidak sesuai skema yang dikenal, nilainya ditandai dan tidak ditebak. DER pada tabel dihitung dari Total Liabilitas dibagi Total Ekuitas, dengan Ekuitas = Total Aset − Total Liabilitas; angka DER mentah penyedia tidak dipakai bila format/unitnya tidak konsisten. " +
+        "Jika format satuan tidak sesuai skema yang dikenal, nilainya ditandai dan tidak ditebak. DER pada tabel dihitung dari Total Liabilitas dibagi Total Ekuitas yang dilaporkan pada periode neraca yang sama. Jika Total Aset tidak seimbang dengan Total Liabilitas + Ekuitas lebih dari 5%, DER diberi tanda * dan perlu dicocokkan ke laporan resmi. " +
         "Periode ringkasan fundamental dapat berbeda antar-metrik; gunakan laporan keuangan resmi untuk memeriksa periode dan konteksnya. " +
         "Cache Worker proyek ini disimpan tanpa kedaluwarsa otomatis selama pengembangan. Status HIT berarti respons diambil dari cache, bukan permintaan baru ke penyedia, sehingga datanya bisa usang.";
     note.appendChild(disclaimer);
@@ -4152,7 +4211,7 @@ function showResultsV2() {
     setupV2SectionObserver();
 }
 
-const COMPARISON_CACHE_KEY = "isc-comparison-cache-v1";
+const COMPARISON_CACHE_KEY = "isc-comparison-cache-v2-20261017";
 
 function readComparisonCache(symbol1, symbol2) {
     try {
