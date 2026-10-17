@@ -2610,8 +2610,8 @@ function ensureFundamentalRows() {
         ["ROE (%)", "tableRoe1", "tableRoe2"],
         ["ROA (%)", "tableRoa1", "tableRoa2"],
         ["DER (%)", "tableDer1", "tableDer2"],
-        ["Revenue (format sumber)", "tableRevenue1", "tableRevenue2"],
-        ["Net Profit (format sumber)", "tableNetProfit1", "tableNetProfit2"]
+        ["Revenue (periode sumber tidak dicantumkan)", "tableRevenue1", "tableRevenue2"],
+        ["Net Profit (periode sumber tidak dicantumkan)", "tableNetProfit1", "tableNetProfit2"]
     ];
 
     const volumeRow = $("tableVolume1")?.closest("tr");
@@ -2682,17 +2682,21 @@ function renderSummaryV2(response, index, symbol) {
     setText("tableForeignSell" + suffix, formatNumber(data.foreignSell));
 }
 
-function renderFundamentalsV2(response, index, symbol) {
+function renderFundamentalsV2(response, index, symbol, dividendsResponse, summaryResponse) {
     const suffix = index + 1;
     const data = parseFundamentalsV2(response);
+    const yieldAudit = auditDividendYieldV2(response, dividendsResponse, summaryResponse);
+    const yieldValue = yieldAudit && yieldAudit.needsReview
+        ? "Perlu verifikasi"
+        : v2MetricValue(data.dividendYield, "percent");
 
     ensureFundamentalRows();
 
-    setText("dividend" + suffix, v2MetricValue(data.dividendYield, "percent"));
+    setText("dividend" + suffix, yieldValue);
     setText("per" + suffix, v2MetricValue(data.per, "multiple"));
     setText("pbv" + suffix, v2MetricValue(data.pbv, "multiple"));
 
-    setText("tableDividend" + suffix, v2MetricValue(data.dividendYield, "percent"));
+    setText("tableDividend" + suffix, yieldValue);
     setText("tablePer" + suffix, v2MetricValue(data.per, "multiple"));
     setText("tablePbv" + suffix, v2MetricValue(data.pbv, "multiple"));
     setText("tableRoe" + suffix, v2MetricValue(data.roe, "percent"));
@@ -2702,7 +2706,10 @@ function renderFundamentalsV2(response, index, symbol) {
     setText("tableNetProfit" + suffix, v2MetricValue(data.netProfit, "currency"));
 }
 
-function renderFundamentalIntegrityNote(response1, symbol1, response2, symbol2) {
+function renderFundamentalIntegrityNote(
+    response1, symbol1, dividends1, summary1,
+    response2, symbol2, dividends2, summary2
+) {
     const note = $("v2DataIntegrityNote");
     if (!note) return;
 
@@ -2712,7 +2719,7 @@ function renderFundamentalIntegrityNote(response1, symbol1, response2, symbol2) 
     heading.textContent = "Transparansi dan kualitas data";
     note.appendChild(heading);
 
-    const describeSource = (response, symbol) => {
+    const describeSource = (response, symbol, dividendResponse, summaryResponse) => {
         if (!response || response.__error) {
             const reason = response?.message || "sumber fundamental tidak tersedia";
             return `${symbol}: data fundamental gagal dimuat (${reason}). Angka terkait tidak ditampilkan.`;
@@ -2746,10 +2753,26 @@ function renderFundamentalIntegrityNote(response1, symbol1, response2, symbol2) 
         if (data.lastUpdated) details.push(`pembaruan penyedia: ${data.lastUpdated}`);
         if (response.timestamp) details.push(`timestamp respons: ${formatApiTimestampV2(response.timestamp)}`);
         if (response.__iscCacheStatus) details.push(`cache Worker: ${response.__iscCacheStatus}`);
+
+        const yieldAudit = auditDividendYieldV2(response, dividendResponse, summaryResponse);
+        if (yieldAudit) {
+            details.push(`yield penyedia ${yieldAudit.providerYield.toFixed(2)}%`);
+            details.push(`estimasi dari event Ex Date yang tersedia ${yieldAudit.eventYield.toFixed(2)}%`);
+            details.push(`jumlah event dihitung ${yieldAudit.eventCount}`);
+            if (yieldAudit.needsReview) {
+                details.push("PERLU VERIFIKASI: yield penyedia berbeda lebih dari 2 poin persentase dari daftar dividen yang tersedia");
+            }
+        } else {
+            details.push("audit yield 12 bulan tidak cukup data; nilai penyedia belum dapat dicocokkan");
+        }
+
         return details.join(" • ") + ".";
     };
 
-    [describeSource(response1, symbol1), describeSource(response2, symbol2)].forEach(line => {
+    [
+        describeSource(response1, symbol1, dividends1, summary1),
+        describeSource(response2, symbol2, dividends2, summary2)
+    ].forEach(line => {
         const paragraph = document.createElement("p");
         paragraph.textContent = line;
         note.appendChild(paragraph);
@@ -2758,6 +2781,7 @@ function renderFundamentalIntegrityNote(response1, symbol1, response2, symbol2) 
     const disclaimer = document.createElement("p");
     disclaimer.className = "v2-data-integrity-disclaimer";
     disclaimer.textContent =
+        "Estimasi yield pembanding = total dividen dengan Ex Date dalam 365 hari sampai tanggal harga referensi dibagi harga penutupan. Ini audit kelengkapan daftar event yang diterima, bukan pengganti angka resmi; daftar dividen penyedia yang tidak lengkap dapat membuat estimasi lebih rendah. " +
         "Metrik dipertahankan dalam format dan satuan yang diberikan penyedia (mis. %, x, atau Rp). " +
         "Jika format satuan tidak sesuai skema yang dikenal, nilainya ditandai dan tidak ditebak. " +
         "Periode ringkasan fundamental dapat berbeda antar-metrik; gunakan laporan keuangan resmi untuk memeriksa periode dan konteksnya. " +
@@ -2853,6 +2877,83 @@ function parseDividendAmount(value) {
     }
 
     return Number(raw);
+}
+
+function parseDividendDateUTCV2(value) {
+    if (!value) return null;
+    const text = String(value).trim();
+
+    const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+
+    const match = text.match(/(\d{1,2})\s+([A-Za-z]{3})\s+'?(\d{2,4})/);
+    if (!match) return null;
+
+    const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+    const monthKey = match[2][0].toUpperCase() + match[2].slice(1,3).toLowerCase();
+    if (!(monthKey in months)) return null;
+
+    let year = Number(match[3]);
+    if (match[3].length === 2) year += 2000;
+    return Date.UTC(year, months[monthKey], Number(match[1]));
+}
+
+function auditDividendYieldV2(fundamentalsResponse, dividendsResponse, summaryResponse) {
+    if (
+        !fundamentalsResponse || fundamentalsResponse.__error ||
+        !dividendsResponse || dividendsResponse.__error ||
+        !summaryResponse || summaryResponse.__error
+    ) return null;
+
+    const rows = summaryResponse.data && Array.isArray(summaryResponse.data.data)
+        ? summaryResponse.data.data
+        : [];
+    const summary = rows[0];
+    const price = Number(summary && summary.Close);
+    const end = parseDividendDateUTCV2(summary && summary.Date);
+    const data = fundamentalsResponse.data || {};
+    const rawYield = data.ratios && data.ratios.dividend
+        ? data.ratios.dividend.ttm
+        : null;
+    const providerYield = parseDividendAmount(rawYield);
+
+    if (!Number.isFinite(price) || price <= 0 || !end || !Number.isFinite(providerYield)) {
+        return null;
+    }
+
+    const start = end - 365 * 24 * 60 * 60 * 1000;
+    const events = safeArray(dividendsResponse.data && dividendsResponse.data.past)
+        .filter(item => item && item.type === "DIVIDEND")
+        .map(item => {
+            const fields = item.fields || {};
+            return {
+                amount: parseDividendAmount(item.value),
+                exDate: parseDividendDateUTCV2(fields["Ex Date"])
+            };
+        })
+        .filter(item =>
+            Number.isFinite(item.amount) &&
+            item.amount >= 0 &&
+            item.exDate !== null &&
+            item.exDate > start &&
+            item.exDate <= end
+        );
+
+    if (!events.length) return null;
+
+    const eventTotal = events.reduce((total, item) => total + item.amount, 0);
+    const eventYield = eventTotal / price * 100;
+    if (!Number.isFinite(eventYield)) return null;
+
+    return {
+        providerYield,
+        eventTotal,
+        eventYield,
+        eventCount: events.length,
+        price,
+        referenceDate: summary.Date,
+        needsReview: Math.abs(providerYield - eventYield) > 2
+    };
 }
 
 function calculateSharedDividendAxis(values) {
@@ -3369,11 +3470,16 @@ function renderFinancialV2(response, index, symbol) {
     selectors.append(typeLabel, periodLabel);
     controls.append(statementTabs, selectors);
 
+    const periodNote = document.createElement("p");
+    periodNote.className = "financial-period-note";
+    periodNote.textContent =
+        "Catatan periode: pada data yang diverifikasi, laporan laba rugi Q2 2026 cocok dengan angka kumulatif Januari–Juni (6M), bukan hanya April–Juni. Untuk perbandingan yang tepat, periksa label periode, kolom Y/Y, dan laporan resmi emiten. Neraca menunjukkan posisi pada tanggal laporan.";
+
     const content = document.createElement("div");
     content.className = "financial-report-content";
     content.appendChild(createEmptyState("Pilih jenis laporan dan periode. Tabel akan diperbarui otomatis."));
 
-    list.append(controls, content);
+    list.append(controls, periodNote, content);
 
     const invalidFinancialLiteral = value =>
         typeof value === "boolean" ||
@@ -4088,11 +4194,17 @@ async function compareStocksV2(restoreOnly = false) {
         renderSummaryV2(stockData1.summary, 0, stock1);
         renderSummaryV2(stockData2.summary, 1, stock2);
 
-        renderFundamentalsV2(stockData1.fundamentals, 0, stock1);
-        renderFundamentalsV2(stockData2.fundamentals, 1, stock2);
+        renderFundamentalsV2(
+            stockData1.fundamentals, 0, stock1,
+            stockData1.dividends, stockData1.summary
+        );
+        renderFundamentalsV2(
+            stockData2.fundamentals, 1, stock2,
+            stockData2.dividends, stockData2.summary
+        );
         renderFundamentalIntegrityNote(
-            stockData1.fundamentals, stock1,
-            stockData2.fundamentals, stock2
+            stockData1.fundamentals, stock1, stockData1.dividends, stockData1.summary,
+            stockData2.fundamentals, stock2, stockData2.dividends, stockData2.summary
         );
 
         renderProfileV2(stockData1.profile, 0, stock1);
